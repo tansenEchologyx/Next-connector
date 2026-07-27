@@ -1,0 +1,35 @@
+---
+description: Keep About_App_Readme.md and Learn.md updated as the single source of truth for what is built
+alwaysApply: true
+---
+
+# Documentation rule — Next Connector
+
+When you add or change **implemented** features in this project, update **both** files below. Document **only what exists in the codebase today** — no planned or future features.
+
+## Files
+
+| File | Purpose |
+|------|---------|
+| `About_App_Readme.md` | Feature list and high-level summary of what the app does **so far** |
+| `Learn.md` | Beginner-friendly deep guide: files, functions, variables, flows, and scenarios |
+
+## When to update
+
+- New route, webhook, worker, Prisma model, or npm script → update both files
+- Behavior change to existing feature → update both files
+- Removed feature → remove from both files
+
+## When NOT to update
+
+- Ideas, todos, or plan-only items not yet coded
+- Duplicate content from `README.md` (Shopify template) unless relevant to our connector
+
+## Style
+
+- **About_App_Readme.md**: concise, feature-oriented, merchant/developer overview
+- **Learn.md**: explain like teaching a beginner — stories, step-by-step flows, file → function → database paths
+
+## Worker commands (reference)
+
+Document any new worker in both files with its `npm run worker:*` command.

@@ -1,0 +1,187 @@
+// Prisma schema for Next Connector (KornitX ↔ Shopify)
+// Local dev: PostgreSQL via Docker (see docker-compose.yml)
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// --- Shopify session storage (required by @shopify/shopify-app-session-storage-prisma) ---
+
+model Session {
+  id                  String    @id
+  shop                String
+  state               String
+  isOnline            Boolean   @default(false)
+  scope               String?
+  expires             DateTime?
+  accessToken         String
+  userId              BigInt?
+  firstName           String?
+  lastName            String?
+  email               String?
+  accountOwner        Boolean   @default(false)
+  locale              String?
+  collaborator        Boolean?  @default(false)
+  emailVerified       Boolean?  @default(false)
+  refreshToken        String?
+  refreshTokenExpires DateTime?
+}
+
+// --- App configuration (per shop) ---
+
+model AppSettings {
+  id                     Int     @id @default(autoincrement())
+  shop                   String  @unique
+  kornitxRefId           String  @default("")
+  deltaIntervalMinutes   Int     @default(30)
+  inventoryLocationId    String  @default("")
+  b2bCustomerId          String  @default("")
+  defaultShippingAddress Json    @default("{}")
+  inboundAuthType        String  @default("basic")
+  preemptiveOrderPrefix  String?
+  lastInventorySyncAt    DateTime?
+  createdAt              DateTime @default(now())
+  updatedAt              DateTime @updatedAt
+}
+
+// --- Inventory tracking (checkbox list in admin UI) ---
+
+model TrackedProduct {
+  id                 Int                 @id @default(autoincrement())
+  shop               String
+  variantId          String
+  ean                String
+  sku                String?
+  productTitle       String
+  enabled            Boolean             @default(true)
+  inventorySyncState InventorySyncState?
+  createdAt          DateTime            @default(now())
+  updatedAt          DateTime            @updatedAt
+
+  @@unique([shop, variantId])
+  @@index([shop, enabled])
+}
+
+model InventorySyncState {
+  id               Int            @id @default(autoincrement())
+  trackedProductId Int            @unique
+  trackedProduct   TrackedProduct @relation(fields: [trackedProductId], references: [id], onDelete: Cascade)
+  pendingQuantity  Int            @default(0)
+  lastSentQuantity Int?
+  lastChangedAt    DateTime       @default(now())
+  lastSentAt       DateTime?
+  needsSync        Boolean        @default(false)
+}
+
+// --- KornitX orders ---
+
+model KornitxOrder {
+  id              Int                   @id @default(autoincrement())
+  kornitxId       String                @unique
+  brand           String
+  destination     String
+  currency        String
+  dateTimeStamp   DateTime
+  orderShape      String                // single | batched
+  status          String                @default("received") // received | processing | created | failed
+  shopifyOrderId  String?
+  orderReceivedAt DateTime              @default(now())
+  failureReason   String?
+  items           KornitxOrderItem[]
+  shippingEvents  ShippingStatusEvent[]
+  createdAt       DateTime              @default(now())
+  updatedAt       DateTime              @updatedAt
+
+  @@index([status])
+}
+
+model KornitxOrderItem {
+  id                Int          @id @default(autoincrement())
+  orderId           Int
+  order             KornitxOrder @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  itemId            String
+  ean               String
+  quantity          Int
+  promiseDate       String
+  orderExternalRef  String
+  shopifyLineItemId String?
+
+  @@unique([orderId, itemId])
+}
+
+// --- Fulfillment → KornitX status ---
+
+model ShippingStatusEvent {
+  id                Int          @id @default(autoincrement())
+  shopifyOrderId    String
+  shopifyLineItemId String?
+  kornitxOrderId    Int
+  order             KornitxOrder @relation(fields: [kornitxOrderId], references: [id], onDelete: Cascade)
+  kornitxItemId     String?
+  status            String       // dispatched | cancelled
+  eventAt           DateTime     @default(now())
+  sent              Boolean      @default(false)
+  sentAt            DateTime?
+
+  @@unique([shopifyOrderId, shopifyLineItemId, status])
+  @@index([sent, eventAt])
+}
+
+// --- Unified worker job queue ---
+
+model SyncJob {
+  id             Int       @id @default(autoincrement())
+  shop           String
+  jobType        String    // process_order | send_fulfillment | send_inventory_delta
+  status         String    @default("pending") // pending | processing | completed | failed
+  idempotencyKey String    @unique
+  payload        Json
+  runAfter       DateTime  @default(now())
+  nextRunAt      DateTime  @default(now())
+  attemptCount   Int       @default(0)
+  maxAttempts    Int       @default(8)
+  lastError      String?
+  lockedAt       DateTime?
+  completedAt    DateTime?
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+
+  @@index([status, nextRunAt, runAfter])
+  @@index([shop, jobType, status])
+}
+
+// --- Inventory delta (unsent rows; sync worker TBD) ---
+
+model InventoryDelta {
+  id              Int      @id @default(autoincrement())
+  shop            String
+  variantId       String
+  ean             String
+  quantity        Int
+  status          String   @default("unsent") // unsent | sent
+  inventoryItemId String?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  @@unique([shop, ean])
+  @@index([shop, status])
+}
+
+// --- Worker observability ---
+
+model JobRun {
+  id         Int       @id @default(autoincrement())
+  jobName    String
+  status     String    // running | completed | failed
+  startedAt  DateTime  @default(now())
+  finishedAt DateTime?
+  error      String?
+  metadata   Json?
+
+  @@index([jobName, startedAt])
+}
