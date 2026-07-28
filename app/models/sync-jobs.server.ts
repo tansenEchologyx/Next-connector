@@ -63,6 +63,7 @@ export async function enqueueSendFulfillmentJobIfNeeded(
   kornitxOrderId: number,
   kornitxId: string,
   orderReceivedAt: Date,
+  options?: { forceReset?: boolean },
 ) {
   const key = sendFulfillmentKey(kornitxId);
   const existing = await prisma.syncJob.findUnique({
@@ -70,6 +71,7 @@ export async function enqueueSendFulfillmentJobIfNeeded(
   });
 
   if (
+    !options?.forceReset &&
     existing &&
     (existing.status === SYNC_JOB_STATUSES.PENDING ||
       existing.status === SYNC_JOB_STATUSES.PROCESSING)

@@ -1,5 +1,11 @@
 import type { SyncJob } from "@prisma/client";
 
+import {
+  ISSUE_SOURCES,
+  ISSUE_TYPES,
+  upsertOpenOrderIssue,
+} from "../../../app/models/kornitx-order-issues.server";
+import { buildOrderCreationRetryWarningMessage } from "../../../shared/order-processing-issues";
 import type { ProcessOrderJobPayload } from "../../../shared/sync-job-types";
 import { processKornitxOrder } from "../process-kornitx-order";
 import { prisma } from "../prisma";
@@ -44,6 +50,17 @@ export async function handleProcessOrderJob(job: SyncJob) {
     if (!result.terminal) {
       const message = error instanceof Error ? error.message : String(error);
       await markOrderReceivedForRetry(order.id, message);
+
+      await upsertOpenOrderIssue(
+        order.id,
+        ISSUE_TYPES.WARNING,
+        ISSUE_SOURCES.ORDER_PROCESSING,
+        buildOrderCreationRetryWarningMessage(
+          message,
+          result.attemptCount,
+          result.nextRunAt,
+        ),
+      );
     }
 
     return {

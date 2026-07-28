@@ -33,8 +33,14 @@ export async function parseKornitxHttpResponse(
   response: Response,
   apiName: string,
 ): Promise<void> {
-  if (response.ok) return;
+  if (response.ok) {
+    console.log(`[kornitx] ${apiName} HTTP ${response.status} OK`);
+    return;
+  }
 
   const body = await response.text();
+  console.error(
+    `[kornitx] ${apiName} HTTP ${response.status} failed: ${body.slice(0, 500)}`,
+  );
   throw new Error(`KornitX ${apiName} HTTP ${response.status}: ${body}`);
 }

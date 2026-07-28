@@ -1,0 +1,130 @@
+.page {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  width: 100%;
+}
+
+.tableCard {
+  width: 100%;
+  background: var(--p-color-bg-surface, #fff);
+  border: 1px solid var(--p-color-border, #e3e3e3);
+  border-radius: 12px;
+  overflow: hidden;
+}
+
+.filterCard {
+  padding: 16px;
+  background: var(--p-color-bg-surface, #fff);
+  border: 1px solid var(--p-color-border, #e3e3e3);
+  border-radius: 12px;
+  overflow: hidden;
+}
+
+.filterForm {
+  width: 100%;
+}
+
+.filterRow {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 12px;
+  width: 100%;
+}
+
+.filterSearch {
+  flex: 1 1 220px;
+  min-width: 140px;
+}
+
+.filterField {
+  flex: 1 1 160px;
+  min-width: 140px;
+}
+
+.filterClear {
+  flex: 1 0 auto;
+  align-self: flex-end;
+  margin-bottom: 2px;
+}
+
+.tableCard {
+  display: flex;
+  flex-direction: column;
+}
+
+.tableWrap {
+  width: 100%;
+  overflow-x: auto;
+}
+
+.tableWrap s-table {
+  width: 100%;
+  min-width: 960px;
+}
+
+.emptyState {
+  padding: 48px 24px;
+  text-align: center;
+}
+
+.emptyStateActions {
+  margin-top: 8px;
+}
+
+.footer {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 12px 16px;
+  border-top: 1px solid var(--p-color-border, #e3e3e3);
+  background: var(--p-color-bg-surface, #fff);
+}
+
+.pageSize {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.pageSizeSelect {
+  width: 72px;
+  flex-shrink: 0;
+}
+
+.pageSizeLabel {
+  color: var(--p-color-text-secondary, #616161);
+  font-size: 13px;
+  white-space: nowrap;
+}
+
+.pagination {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.paginationStatus {
+  color: var(--p-color-text, #303030);
+  font-size: 13px;
+  white-space: nowrap;
+}
+
+.issueCell {
+  width: 40px;
+  text-align: center;
+}
+
+.actionsCell {
+  white-space: nowrap;
+}
+
+@media (max-width: 900px) {
+  .filterField {
+    flex: 1 1 calc(50% - 12px);
+    min-width: 140px;
+  }
+}

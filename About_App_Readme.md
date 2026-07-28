@@ -2,7 +2,7 @@
 
 Documentation of **features built so far** in the Next Connector Shopify app (KornitX / Next Label Plus integration).
 
-_Last updated: coalesced batched fulfillment + configurable fulfillment delay._
+_Last updated: orders list page with filters, pagination, issues, and send-fulfillment tracking._
 
 ---
 
@@ -37,7 +37,8 @@ This file lists only what is **implemented today**.
   - **TrackedProduct** — products selected for inventory sync
   - **InventorySyncState** — legacy per-product sync state (from inventory UI)
   - **InventoryDelta** — unsent inventory changes per EAN (from inventory webhook)
-  - **KornitxOrder** / **KornitxOrderItem** — inbound KornitX orders
+  - **KornitxOrder** / **KornitxOrderItem** — inbound KornitX orders (`shopifyOrderName` stored when Shopify order is created)
+  - **KornitxOrderIssue** — active warnings/errors per order (order processing, fulfillment send); retryable failures surface as warnings with the next retry time
   - **ShippingStatusEvent** — fulfillment events queued for KornitX
   - **SyncJob** — unified work queue (`process_order`, `send_fulfillment`, `send_inventory_delta`)
   - **JobRun** — log of each worker poll cycle
@@ -49,7 +50,7 @@ This file lists only what is **implemented today**.
 | `/app` | Dashboard — order counts, unsent inventory deltas, recent worker runs, setup warnings |
 | `/app/settings` | KornitX Ref ID, B2B customer, webhook URL info |
 | `/app/inventory` | Product table with checkboxes — saves `TrackedProduct` rows (barcode required) |
-| `/app/orders` | KornitX order log with status badges; retry failed orders (re-queues a SyncJob) |
+| `/app/orders` | Paginated KornitX order list — search/filters, issue indicator popover, fulfillment vs send-fulfillment columns; retry/resend actions ask for confirmation before enqueueing SyncJobs (resend resets fulfillment job backoff and attempt count)
 
 ### 4. Webhooks
 
@@ -104,6 +105,7 @@ Optional `.env`: `WORKER_SHOP`, `WORKER_POLL_INTERVAL_MS`, `INVENTORY_SYNC_INTER
 | `npm run db:reset` | Remove volume and recreate database |
 | `npm run db:migrate` | Apply Prisma migrations (dev) |
 | `npm run db:studio` | Open Prisma Studio GUI |
+| `npm run simulate:kornitx-orders` | Insert 3 sample KornitX orders (1 single, 2 batched) for local testing |
 
 ### 8. Configuration
 

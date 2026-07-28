@@ -30,6 +30,9 @@ export async function handleSendInventoryDeltaJob(job: SyncJob) {
   });
 
   if (unsent.length === 0) {
+    console.log(
+      `[run-jobs] Inventory job ${job.id} for ${job.shop}: no unsent deltas — completing without calling KornitX`,
+    );
     await completeSyncJob(job.id);
     return { outcome: "nothing_to_send" as const };
   }

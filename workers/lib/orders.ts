@@ -3,6 +3,12 @@
  */
 import type { KornitxOrder } from "@prisma/client";
 import { prisma } from "./prisma";
+import {
+  ISSUE_SOURCES,
+  ISSUE_TYPES,
+  createOrderIssue,
+  resolveOrderIssuesBySource,
+} from "../../app/models/kornitx-order-issues.server";
 
 export async function markOrderProcessing(orderId: number) {
   return prisma.kornitxOrder.update({
@@ -24,12 +30,18 @@ export async function markOrderReceivedForRetry(
 export async function markOrderCreated(
   orderId: number,
   shopifyOrderId: string,
+  shopifyOrderName: string,
   lineItemMappings: Array<{ kornitxItemId: string; shopifyLineItemId: string }>,
 ) {
   return prisma.$transaction(async (tx) => {
     await tx.kornitxOrder.update({
       where: { id: orderId },
-      data: { status: "created", shopifyOrderId, failureReason: null },
+      data: {
+        status: "created",
+        shopifyOrderId,
+        shopifyOrderName,
+        failureReason: null,
+      },
     });
 
     for (const mapping of lineItemMappings) {
@@ -38,14 +50,23 @@ export async function markOrderCreated(
         data: { shopifyLineItemId: mapping.shopifyLineItemId },
       });
     }
+
+    await resolveOrderIssuesBySource(orderId, ISSUE_SOURCES.ORDER_PROCESSING);
   });
 }
 
 export async function markOrderFailed(orderId: number, reason: string) {
-  return prisma.kornitxOrder.update({
+  await prisma.kornitxOrder.update({
     where: { id: orderId },
     data: { status: "failed", failureReason: reason },
   });
+
+  await createOrderIssue(
+    orderId,
+    ISSUE_TYPES.ERROR,
+    ISSUE_SOURCES.ORDER_PROCESSING,
+    reason,
+  );
 }
 
 export type ClaimedKornitxOrder = KornitxOrder & {

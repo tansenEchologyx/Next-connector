@@ -1,5 +1,12 @@
 import type { SyncJob } from "@prisma/client";
 
+import {
+  ISSUE_SOURCES,
+  ISSUE_TYPES,
+  resolveOrderIssuesBySource,
+  upsertOpenOrderIssue,
+} from "../../../app/models/kornitx-order-issues.server";
+import { buildFulfillmentSendRetryWarningMessage } from "../../../shared/order-processing-issues";
 import { enqueueSendFulfillmentJobIfNeeded } from "../../../app/models/sync-jobs.server";
 import type { SendFulfillmentJobPayload } from "../../../shared/sync-job-types";
 import {
@@ -71,6 +78,9 @@ export async function handleSendFulfillmentJob(job: SyncJob) {
   });
 
   if (unsent.length === 0) {
+    console.log(
+      `[run-jobs] Fulfillment job ${job.id} for order ${order.kornitxId}: no unsent shipping events — completing without calling KornitX`,
+    );
     await completeSyncJob(job.id);
     return { outcome: "nothing_to_send" as const };
   }
@@ -87,6 +97,8 @@ export async function handleSendFulfillmentJob(job: SyncJob) {
     });
 
     await completeSyncJob(job.id);
+
+    await resolveOrderIssuesBySource(order.id, ISSUE_SOURCES.FULFILLMENT_SEND);
 
     const remaining = await prisma.shippingStatusEvent.count({
       where: { kornitxOrderId: order.id, sent: false },
@@ -111,10 +123,32 @@ export async function handleSendFulfillmentJob(job: SyncJob) {
       remainingUnsent: remaining,
     };
   } catch (error) {
-    await failSyncJobWithBackoff(job, error);
+    const result = await failSyncJobWithBackoff(job, error);
+    const message = error instanceof Error ? error.message : String(error);
+
+    if (result.terminal) {
+      await upsertOpenOrderIssue(
+        order.id,
+        ISSUE_TYPES.ERROR,
+        ISSUE_SOURCES.FULFILLMENT_SEND,
+        `Fulfillment status could not be sent to KornitX: ${message}`,
+      );
+    } else {
+      await upsertOpenOrderIssue(
+        order.id,
+        ISSUE_TYPES.WARNING,
+        ISSUE_SOURCES.FULFILLMENT_SEND,
+        buildFulfillmentSendRetryWarningMessage(
+          message,
+          result.attemptCount,
+          result.nextRunAt,
+        ),
+      );
+    }
+
     return {
       outcome: "error" as const,
-      message: error instanceof Error ? error.message : String(error),
+      message,
     };
   }
 }

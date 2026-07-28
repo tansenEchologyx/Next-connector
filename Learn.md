@@ -2,7 +2,7 @@
 
 A beginner-friendly guide to **how the code works today**. Read this to understand files, functions, data, and flows.
 
-_Last updated: coalesced batched fulfillment + configurable fulfillment delay._
+_Last updated: orders list page with filters, pagination, issues, and send-fulfillment tracking._
 
 ---
 
@@ -253,6 +253,8 @@ curl -X POST "https://<tunnel-url>/webhooks/kornitx/orders" \
 
 Check Prisma Studio or `/app/orders` to see the saved order.
 
+For quick local testing without curl, run `npm run simulate:kornitx-orders`. It inserts three sample orders (one `single`, two `batched`) and enqueues `process_order` SyncJobs.
+
 ---
 
 ### `/app/inventory` — Tracked products (`app/routes/app.inventory.tsx`)
@@ -273,13 +275,26 @@ Check Prisma Studio or `/app/orders` to see the saved order.
 
 ---
 
-### `/app/orders` — KornitX order log (`app/routes/app.orders.tsx`)
+### `/app/orders` — KornitX order list (`app/routes/app.orders.tsx`)
 
-**Loader:** `listRecentOrders(100)` — orders with line items, newest first.
+**Loader:** reads URL search params via `parseOrderListFilters()`, then `listOrders(filters)` — paginated orders with items, shipping events, and active issues.
 
-**Action (retry):** `retryFailedOrder(shop, orderId)` sets order `status = received`, clears `failureReason`, and enqueues a `process_order` SyncJob.
+**Filters (URL params):** `q`, `status`, `shape`, `fulfillment`, `sendFulfillment`, `sort`, `page`, `pageSize`.
 
-**Helper file:** `app/models/kornitx-orders.server.ts`
+**Table columns:** issue indicator, KornitX ID, order creation status, shape, items, Shopify order name, received date, fulfillment status (Shopify-side), send fulfillment (KornitX sync: unsent / sent / failed), actions.
+
+**Issue popover:** alert icon when the order has open `KornitxOrderIssue` rows (red for errors, amber for warnings only). Click to see ERROR/WARNING messages and timestamps. Issues clear when the underlying problem is resolved (order created, fulfillment sent, etc.). Retryable failures (Shopify/network for order creation, KornitX API for fulfillment send) open a **WARNING** such as `Order creation failed: … 2nd retry at 28/07/2026, 20:45:00.` or `Fulfillment send to KornitX failed: … 2nd retry at …`; terminal failures show **ERROR**.
+
+**Actions:**
+- **Retry** — failed order creation; opens a confirmation modal, then `retryFailedOrder` re-enqueues `process_order` for the worker’s next cycle
+- **Resend** (send icon) — unsent/failed fulfillment send; opens a confirmation modal, then `resendFulfillmentForOrder` force-resets the order’s `send_fulfillment` SyncJob (`attemptCount` → 0, `nextRunAt` → now or order received + delay) even if the job is already `pending` from automatic retry backoff
+
+**Display helpers:** `shared/order-display.ts` derives fulfillment status from shipping events and send-fulfillment status from unsent events + SyncJob state.
+
+**Helper files:**
+- `app/models/kornitx-orders.server.ts` — list, retry, resend
+- `app/models/kornitx-order-issues.server.ts` — create/resolve issues
+- `app/components/orders/*` — filters, badges, issue popover UI
 
 ---
 
@@ -376,8 +391,8 @@ Webhooks enqueue rows; `run-jobs` claims and processes them.
 | `claimReceivedOrders(limit?)` | Legacy helper (unused by `run-jobs`) |
 | `markOrderProcessing(orderId)` | Sets status `processing` when job starts |
 | `markOrderReceivedForRetry(orderId, reason)` | Sets status `received` when job will retry |
-| `markOrderCreated(...)` | Sets status `created`, saves Shopify IDs |
-| `markOrderFailed(orderId, reason)` | Terminal failure on order row |
+| `markOrderCreated(...)` | Sets status `created`, saves Shopify order id + name, resolves order-processing issues |
+| `markOrderFailed(orderId, reason)` | Terminal failure on order row; creates ERROR issue |
 
 ---
 
@@ -394,7 +409,7 @@ Webhooks enqueue rows; `run-jobs` claims and processes them.
 3. Loop: `claimNextDueSyncJob()` → `dispatchSyncJob()` until no due jobs
 4. Priority: `process_order` → `send_fulfillment` → `send_inventory_delta`
 5. **`send_inventory_delta`:** skips until `lastInventorySyncAt + INVENTORY_SYNC_INTERVAL_SECONDS`; PUTs unsent `InventoryDelta` rows in batches of 100
-6. **`send_fulfillment`:** skips until `orderReceivedAt + FULFILLMENT_DELAY_SECONDS` (default 20 min); loads all unsent `ShippingStatusEvent` rows for the order and sends one PUT (batched: `PUT /order-item/status` with full item array)
+6. **`send_fulfillment`:** skips until `orderReceivedAt + FULFILLMENT_DELAY_SECONDS` (default 20 min); loads all unsent `ShippingStatusEvent` rows for the order and sends one PUT (batched: `PUT /order-item/status` with full item array). On retryable failure, upserts a WARNING issue; on terminal failure, upserts an ERROR issue. Success resolves fulfillment issues.
 7. Writes `JobRun` metadata per cycle
 
 **Run locally (runs until Ctrl+C):**
