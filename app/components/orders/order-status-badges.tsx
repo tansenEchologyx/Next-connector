@@ -6,6 +6,7 @@ import {
   FULFILLMENT_STATUS_LABELS,
   SEND_FULFILLMENT_STATUS_LABELS,
 } from "../../../shared/order-display";
+import { formatUkDateTime } from "../../../shared/uk-time";
 
 export function creationStatusTone(
   status: string,
@@ -69,16 +70,7 @@ export function formatSendFulfillmentStatus(
 }
 
 export function formatOrderDate(value: Date | string): string {
-  const date = value instanceof Date ? value : new Date(value);
-  return date.toLocaleString("en-GB", {
-    day: "2-digit",
-    month: "2-digit",
-    year: "numeric",
-    hour: "2-digit",
-    minute: "2-digit",
-    second: "2-digit",
-    hour12: false,
-  });
+  return formatUkDateTime(value);
 }
 
 export function issueTypeLabel(type: string): string {

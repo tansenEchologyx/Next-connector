@@ -1,0 +1,36 @@
+.timeField {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  max-width: 280px;
+}
+
+.timeLabel {
+  font-size: 13px;
+  font-weight: 450;
+  color: var(--p-color-text, #303030);
+}
+
+.timeInput {
+  width: 100%;
+  box-sizing: border-box;
+  min-height: 36px;
+  padding: 6px 12px;
+  border: 1px solid var(--p-color-border, #8a8a8a);
+  border-radius: 8px;
+  background: var(--p-color-bg-surface, #fff);
+  color: var(--p-color-text, #303030);
+  font: inherit;
+  font-size: 13px;
+}
+
+.timeInput:focus {
+  outline: 2px solid var(--p-color-border-focus, #005bd3);
+  outline-offset: 1px;
+}
+
+.timeHint {
+  margin: 0;
+  font-size: 12px;
+  color: var(--p-color-text-secondary, #616161);
+}

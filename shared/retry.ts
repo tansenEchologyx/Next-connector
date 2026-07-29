@@ -33,6 +33,8 @@ export function isRetryableError(error: unknown): boolean {
   if (lower.includes("no shopify variant found")) return false;
   if (lower.includes("kornitx ref id")) return false;
   if (lower.includes("kornitx api key")) return false;
+  if (lower.includes("inventory location not configured")) return false;
+  if (lower.includes("no shopify primary location")) return false;
   if (lower.includes("50000")) return false;
   if (lower.includes("incorrect refid")) return false;
 
