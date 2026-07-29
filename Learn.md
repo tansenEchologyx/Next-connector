@@ -408,7 +408,7 @@ Webhooks enqueue rows; `run-jobs` claims and processes them.
 2. `reclaimStaleSyncJobs()` — reset jobs stuck in `processing` > 15 min
 3. Loop: `claimNextDueSyncJob()` → `dispatchSyncJob()` until no due jobs
 4. Priority: `process_order` → `send_fulfillment` → `send_inventory_delta`
-5. **`send_inventory_delta`:** skips until `lastInventorySyncAt + INVENTORY_SYNC_INTERVAL_SECONDS`; PUTs unsent `InventoryDelta` rows in batches of 100. After all batches succeed, each row is marked `sent` only if its snapshot `quantity` and `updatedAt` still match — if a webhook updated the same EAN mid-run, that row stays `unsent` and is picked up on the next interval. `lastInventorySyncAt` always advances when the KornitX PUT completes (preserves the 30-min rule even when some rows could not be marked sent).
+5. **`send_inventory_delta`:** skips until `lastInventorySyncAt + INVENTORY_SYNC_INTERVAL_SECONDS`; PUTs unsent `InventoryDelta` rows in batches of 100. After each successful batch, rows in that batch are marked `sent` only if snapshot `quantity` and `updatedAt` still match. `lastInventorySyncAt` advances when any batch succeeds. If a later batch fails, earlier batches stay marked sent and leftovers retry at the next interval (not exponential backoff). Total failure on the first batch still uses retry backoff.
 6. **`send_fulfillment`:** skips until `orderReceivedAt + FULFILLMENT_DELAY_SECONDS` (default 20 min); loads all unsent `ShippingStatusEvent` rows for the order and sends one PUT (batched: `PUT /order-item/status` with full item array). On retryable failure, upserts a WARNING issue; on terminal failure, upserts an ERROR issue. Success resolves fulfillment issues.
 7. Writes `JobRun` metadata per cycle
 
@@ -440,7 +440,9 @@ Optional `.env`: `WORKER_POLL_INTERVAL_MS=300000` (5 min default).
 
 **Sending:** handled by **`run-jobs`** when `INVENTORY_SYNC_INTERVAL_SECONDS` has elapsed since `AppSettings.lastInventorySyncAt` (default **1800** = 30 min).
 
-**Mid-run race:** the handler snapshots unsent rows, sends them to KornitX, then marks each row `sent` only if `quantity` and `updatedAt` are unchanged. Example: snapshot has qty 10, webhook updates to 15 during the run → KornitX gets 10, row stays `unsent` with 15, corrected on the next interval run (~30 min later).
+**Mid-run race:** the handler snapshots unsent rows, sends them in batches of 100, and marks each batch's rows `sent` only if `quantity` and `updatedAt` are unchanged. Example: snapshot has qty 10, webhook updates to 15 during the run → KornitX gets 10, row stays `unsent` with 15, corrected on the next interval run (~30 min later).
+
+**Partial batch failure:** if batch 1 succeeds and batch 2 fails, batch 1 rows are already marked `sent`, `lastInventorySyncAt` is updated, and batch 2 rows retry at the next interval — batch 1 is not resent. If the first batch fails, nothing is marked sent and normal exponential backoff applies.
 
 ---
 

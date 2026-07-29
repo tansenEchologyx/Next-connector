@@ -16,13 +16,13 @@ todos:
     status: completed
   - id: p2-per-batch-commits
     content: "Phase 2: Refactor send flow to mark rows sent optimistically after each successful 100-EAN batch"
-    status: pending
+    status: completed
   - id: p2-interval-retry-leftovers
     content: "Phase 2: On partial batch failure, update lastInventorySyncAt and schedule leftover retry at +30min (not exponential backoff)"
-    status: pending
+    status: completed
   - id: p2-update-docs
     content: "Phase 2: Document per-batch commit and interval retry behavior in About_App_Readme.md and Learn.md"
-    status: pending
+    status: completed
 isProject: false
 ---
 

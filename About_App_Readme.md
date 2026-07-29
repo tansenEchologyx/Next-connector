@@ -75,7 +75,7 @@ KornitX inbound auth is configured in `.env` (`KORNITX_WEBHOOK_BASIC_*` or `KORN
 4. Job types (in order):
    - **`process_order`** — Shopify `orderCreate`
    - **`send_fulfillment`** — KornitX shipping status PUT (batched orders: one API call with all unsent line items)
-   - **`send_inventory_delta`** — KornitX stock PUT for all unsent `InventoryDelta` rows (respects `INVENTORY_SYNC_INTERVAL_SECONDS` since `lastInventorySyncAt`). After a successful PUT, rows are marked `sent` only if their snapshot `quantity` and `updatedAt` are unchanged (mid-run webhook updates stay `unsent` for the next interval). `lastInventorySyncAt` advances on every successful PUT.
+   - **`send_inventory_delta`** — KornitX stock PUT for unsent `InventoryDelta` rows in batches of 100 (respects `INVENTORY_SYNC_INTERVAL_SECONDS` since `lastInventorySyncAt`). Each successful batch is marked `sent` immediately (optimistic `quantity` + `updatedAt` check). On partial batch failure, earlier batches stay marked sent, `lastInventorySyncAt` advances, and leftovers retry at the next interval — not exponential backoff.
 5. Marks each job **`processing`** while in flight (safe for multiple worker instances later)
 6. Retryable errors use exponential backoff on the SyncJob (`nextRunAt`, up to 8 attempts)
 7. Writes a **JobRun** summary per cycle
