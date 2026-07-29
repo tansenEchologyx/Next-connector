@@ -44,21 +44,29 @@ export async function handleSendInventoryDeltaJob(job: SyncJob) {
     );
 
     const now = new Date();
+    let markedCount = 0;
     await prisma.$transaction(async (tx) => {
-      await tx.inventoryDelta.updateMany({
-        where: {
-          shop: job.shop,
-          status: "unsent",
-          id: { in: unsent.map((row) => row.id) },
-        },
-        data: { status: "sent" },
-      });
+      for (const row of unsent) {
+        const result = await tx.inventoryDelta.updateMany({
+          where: {
+            id: row.id,
+            shop: job.shop,
+            status: "unsent",
+            updatedAt: row.updatedAt,
+            quantity: row.quantity,
+          },
+          data: { status: "sent" },
+        });
+        markedCount += result.count;
+      }
 
       await tx.appSettings.updateMany({
         where: { shop: job.shop },
         data: { lastInventorySyncAt: now },
       });
     });
+
+    const skippedDueToRace = unsent.length - markedCount;
 
     await completeSyncJob(job.id);
 
@@ -70,13 +78,21 @@ export async function handleSendInventoryDeltaJob(job: SyncJob) {
       await enqueueSendInventoryDeltaJobIfNeeded(job.shop);
     }
 
+    if (skippedDueToRace > 0) {
+      console.log(
+        `[run-jobs] Inventory job ${job.id} for ${job.shop}: marked ${markedCount}/${unsent.length} sent; ${skippedDueToRace} row(s) changed during run and remain unsent`,
+      );
+    }
+
     console.log(
-      `[run-jobs] Sent ${unsent.length} inventory delta(s) to KornitX for ${job.shop}. Remaining unsent: ${remaining}`,
+      `[run-jobs] Sent ${unsent.length} inventory delta(s) to KornitX for ${job.shop}. Marked sent: ${markedCount}. Remaining unsent: ${remaining}`,
     );
 
     return {
       outcome: "synced" as const,
       sentCount: unsent.length,
+      markedCount,
+      skippedDueToRace,
       remainingUnsent: remaining,
     };
   } catch (error) {
