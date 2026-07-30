@@ -3,8 +3,16 @@ import type {
   ActionFunctionArgs,
   HeadersFunction,
   LoaderFunctionArgs,
+  ShouldRevalidateFunctionArgs,
 } from "react-router";
-import { Form, useActionData, useLoaderData, useNavigation, useSearchParams } from "react-router";
+import {
+  Form,
+  useActionData,
+  useLoaderData,
+  useNavigation,
+  useSearchParams,
+  useSubmit,
+} from "react-router";
 import { useAppBridge } from "@shopify/app-bridge-react";
 import { boundary } from "@shopify/shopify-app-react-router/server";
 
@@ -22,9 +30,11 @@ import { resolveEffectiveInventoryLocation } from "../../shared/inventory-locati
 import {
   filterInventoryVariants,
   hasActiveInventoryFilters,
+  paginateInventoryVariants,
   parseInventoryListFilters,
 } from "../../shared/inventory-list-filters";
 import { InventoryFilters } from "../components/inventory/inventory-filters";
+import styles from "../components/inventory/inventory-page.module.css";
 import { authenticate } from "../shopify.server";
 
 type InventoryLoaderData = {
@@ -34,6 +44,19 @@ type InventoryLoaderData = {
   locationMode: "primary" | "selected" | null;
   locationWarning: "no_location" | "primary_missing" | null;
 };
+
+function readPolarisValue(event: unknown): string {
+  if (!event || typeof event !== "object") return "";
+  const e = event as {
+    currentTarget?: { value?: string } | null;
+    target?: { value?: string } | null;
+    detail?: { value?: string };
+  };
+  if (e.detail?.value != null) return String(e.detail.value);
+  const el = e.currentTarget ?? e.target;
+  if (el && typeof el.value === "string") return el.value;
+  return "";
+}
 
 async function loadInventoryForShop(
   admin: Parameters<typeof fetchProductVariantsWithInventory>[0],
@@ -124,6 +147,31 @@ export const action = async ({ request }: ActionFunctionArgs) => {
   return { ok: true as const, trackedCount: selectedVariants.length };
 };
 
+/** Skip Shopify re-fetch when only page / pageSize URL params change. */
+export function shouldRevalidate({
+  currentUrl,
+  nextUrl,
+  formMethod,
+  defaultShouldRevalidate,
+}: ShouldRevalidateFunctionArgs) {
+  if (formMethod && formMethod !== "GET") {
+    return defaultShouldRevalidate;
+  }
+
+  const stripPageParams = (url: URL) => {
+    const params = new URLSearchParams(url.searchParams);
+    params.delete("page");
+    params.delete("pageSize");
+    return params.toString();
+  };
+
+  if (stripPageParams(currentUrl) === stripPageParams(nextUrl)) {
+    return false;
+  }
+
+  return defaultShouldRevalidate;
+}
+
 function availabilityLabel(isAvailable: boolean): string {
   return isAvailable ? "Available" : "Unavailable";
 }
@@ -133,15 +181,17 @@ export default function InventoryPage() {
     useLoaderData<typeof loader>();
   const actionData = useActionData<typeof action>();
   const navigation = useNavigation();
+  const [searchParams] = useSearchParams();
+  const submit = useSubmit();
   const shopify = useAppBridge();
-  const isSaving = navigation.state !== "idle";
+  const isSaving = navigation.state === "submitting";
+  const isLoading = navigation.state === "loading";
 
   const initialSelected = useMemo(
     () => new Set(trackedVariantIds),
     [trackedVariantIds],
   );
   const [selected, setSelected] = useState(initialSelected);
-  const [searchParams] = useSearchParams();
   const filters = useMemo(
     () => parseInventoryListFilters(searchParams),
     [searchParams],
@@ -161,6 +211,28 @@ export default function InventoryPage() {
     () => filterInventoryVariants(variants, activeFilters, selected),
     [variants, activeFilters, selected],
   );
+
+  const {
+    items: pageVariants,
+    page,
+    pageSize,
+    totalPages,
+  } = useMemo(() => {
+    // While search is typing ahead of the URL, show page 1 of the live filter.
+    const pageForSlice =
+      searchQuery !== filters.q ? 1 : filters.page;
+    return paginateInventoryVariants(
+      filteredVariants,
+      pageForSlice,
+      filters.pageSize,
+    );
+  }, [
+    filteredVariants,
+    filters.page,
+    filters.pageSize,
+    filters.q,
+    searchQuery,
+  ]);
 
   const filtersActive = hasActiveInventoryFilters(activeFilters);
 
@@ -182,8 +254,29 @@ export default function InventoryPage() {
     });
   };
 
+  const goToPage = (nextPage: number) => {
+    const params = new URLSearchParams(searchParams);
+    if (nextPage <= 1) {
+      params.delete("page");
+    } else {
+      params.set("page", String(nextPage));
+    }
+    submit(params, { method: "get", replace: true });
+  };
+
+  const handlePageSizeChange = (value: string) => {
+    const params = new URLSearchParams(searchParams);
+    if (value === "10") {
+      params.delete("pageSize");
+    } else {
+      params.set("pageSize", value);
+    }
+    params.delete("page");
+    submit(params, { method: "get", replace: true });
+  };
+
   return (
-    <s-page heading="Inventory sync">
+    <s-page heading="Inventory sync" inlineSize="large">
       <Form method="post">
         <s-button
           slot="primary-action"
@@ -203,7 +296,7 @@ export default function InventoryPage() {
           />
         ))}
 
-        <s-section heading="Tracked products">
+        <div className={styles.page}>
           {locationLabel ? (
             <s-paragraph>
               Stock at: <s-text type="strong">{locationLabel}</s-text>
@@ -242,11 +335,13 @@ export default function InventoryPage() {
           </s-paragraph>
 
           {!locationWarning ? (
-            <InventoryFilters
-              filters={filters}
-              searchQuery={searchQuery}
-              onSearchQueryChange={setSearchQuery}
-            />
+            <div className={styles.filterCard}>
+              <InventoryFilters
+                filters={filters}
+                searchQuery={searchQuery}
+                onSearchQueryChange={setSearchQuery}
+              />
+            </div>
           ) : null}
 
           {locationWarning ? null : variants.length === 0 ? (
@@ -265,71 +360,128 @@ export default function InventoryPage() {
               </s-text>
             </s-box>
           ) : (
-            <s-table variant="auto">
-              <s-table-header-row>
-                <s-table-header listSlot="primary">Track</s-table-header>
-                <s-table-header>Product</s-table-header>
-                <s-table-header>Variant</s-table-header>
-                <s-table-header>SKU</s-table-header>
-                <s-table-header>EAN</s-table-header>
-                <s-table-header>Qty</s-table-header>
-                <s-table-header>Availability</s-table-header>
-              </s-table-header-row>
-              <s-table-body>
-                {filteredVariants.map((variant) => {
-                  const checked = selected.has(variant.variantId);
-                  return (
-                    <s-table-row key={variant.variantId}>
-                      <s-table-cell>
-                        <s-checkbox
-                          checked={checked}
-                          onChange={(event) =>
-                            toggleVariant(
-                              variant.variantId,
-                              event.currentTarget.checked,
-                            )
-                          }
-                          label={`Track ${variant.productTitle}`}
-                        />
-                      </s-table-cell>
-                      <s-table-cell>{variant.productTitle}</s-table-cell>
-                      <s-table-cell>{variant.variantTitle}</s-table-cell>
-                      <s-table-cell>{variant.sku ?? "—"}</s-table-cell>
-                      <s-table-cell>{variant.barcode}</s-table-cell>
-                      <s-table-cell>{variant.availableQuantity}</s-table-cell>
-                      <s-table-cell>
-                        {availabilityLabel(variant.isAvailable)}
-                      </s-table-cell>
-                    </s-table-row>
-                  );
-                })}
-              </s-table-body>
-            </s-table>
-          )}
-        </s-section>
-      </Form>
+            <div className={styles.tableCard}>
+              <div className={styles.tableWrap}>
+                <s-table variant="auto" loading={isLoading}>
+                  <s-table-header-row>
+                    <s-table-header listSlot="primary">Track</s-table-header>
+                    <s-table-header>Product</s-table-header>
+                    <s-table-header>Variant</s-table-header>
+                    <s-table-header>SKU</s-table-header>
+                    <s-table-header>EAN</s-table-header>
+                    <s-table-header>Qty</s-table-header>
+                    <s-table-header>Availability</s-table-header>
+                  </s-table-header-row>
+                  <s-table-body>
+                    {pageVariants.map((variant) => {
+                      const checked = selected.has(variant.variantId);
+                      return (
+                        <s-table-row key={variant.variantId}>
+                          <s-table-cell>
+                            <s-checkbox
+                              checked={checked}
+                              onChange={(event) =>
+                                toggleVariant(
+                                  variant.variantId,
+                                  event.currentTarget.checked,
+                                )
+                              }
+                              label={`Track ${variant.productTitle}`}
+                            />
+                          </s-table-cell>
+                          <s-table-cell>{variant.productTitle}</s-table-cell>
+                          <s-table-cell>{variant.variantTitle}</s-table-cell>
+                          <s-table-cell>{variant.sku ?? "—"}</s-table-cell>
+                          <s-table-cell>{variant.barcode}</s-table-cell>
+                          <s-table-cell>
+                            {variant.availableQuantity}
+                          </s-table-cell>
+                          <s-table-cell>
+                            {availabilityLabel(variant.isAvailable)}
+                          </s-table-cell>
+                        </s-table-row>
+                      );
+                    })}
+                  </s-table-body>
+                </s-table>
+              </div>
 
-      <s-section slot="aside" heading="How it works">
-        <s-unordered-list>
-          <s-list-item>
-            All barcoded variants in your store are listed; qty and availability
-            come from the location in Settings.
-          </s-list-item>
-          <s-list-item>
-            Out-of-stock items appear as Unavailable but can still be tracked.
-          </s-list-item>
-          <s-list-item>
-            Inventory webhooks store unsent rows in the inventory delta table
-            for tracked SKUs and enqueue one coalesced sync job.
-          </s-list-item>
-          <s-list-item>
-            The unified <s-text type="strong">run-jobs</s-text> worker sends
-            unsent deltas to KornitX when{" "}
-            <s-text type="strong">INVENTORY_SYNC_INTERVAL_SECONDS</s-text> has
-            elapsed since the last successful sync (default 1800 = 30 minutes).
-          </s-list-item>
-        </s-unordered-list>
-      </s-section>
+              <div className={styles.footer}>
+                <div className={styles.pageSize}>
+                  <div className={styles.pageSizeSelect}>
+                    <s-select
+                      label="Variants per page"
+                      labelAccessibilityVisibility="exclusive"
+                      value={String(pageSize)}
+                      onChange={(event) =>
+                        handlePageSizeChange(readPolarisValue(event))
+                      }
+                    >
+                      <s-option value="10">10</s-option>
+                      <s-option value="25">25</s-option>
+                      <s-option value="50">50</s-option>
+                    </s-select>
+                  </div>
+                  <span className={styles.pageSizeLabel}>
+                    variants per page
+                  </span>
+                </div>
+
+                <div className={styles.pagination}>
+                  <s-button
+                    type="button"
+                    variant="secondary"
+                    disabled={page <= 1 || isLoading ? true : undefined}
+                    onClick={() => goToPage(page - 1)}
+                  >
+                    Previous
+                  </s-button>
+                  <span className={styles.paginationStatus}>
+                    Page {page} of {totalPages}
+                  </span>
+                  <s-button
+                    type="button"
+                    variant="secondary"
+                    disabled={
+                      page >= totalPages || isLoading ? true : undefined
+                    }
+                    onClick={() => goToPage(page + 1)}
+                  >
+                    Next
+                  </s-button>
+                </div>
+              </div>
+            </div>
+          )}
+
+          <s-box padding="base" background="subdued" borderRadius="base">
+            <s-stack direction="block" gap="base">
+              <s-text type="strong">How it works</s-text>
+              <s-unordered-list>
+                <s-list-item>
+                  All barcoded variants in your store are listed; qty and
+                  availability come from the location in Settings.
+                </s-list-item>
+                <s-list-item>
+                  Out-of-stock items appear as Unavailable but can still be
+                  tracked.
+                </s-list-item>
+                <s-list-item>
+                  Inventory webhooks store unsent rows in the inventory delta
+                  table for tracked SKUs and enqueue one coalesced sync job.
+                </s-list-item>
+                <s-list-item>
+                  The unified <s-text type="strong">run-jobs</s-text> worker
+                  sends unsent deltas to KornitX when{" "}
+                  <s-text type="strong">INVENTORY_SYNC_INTERVAL_SECONDS</s-text>{" "}
+                  has elapsed since the last successful sync (default 1800 = 30
+                  minutes).
+                </s-list-item>
+              </s-unordered-list>
+            </s-stack>
+          </s-box>
+        </div>
+      </Form>
     </s-page>
   );
 }

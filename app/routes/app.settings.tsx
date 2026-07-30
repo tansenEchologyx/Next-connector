@@ -162,7 +162,7 @@ export default function SettingsPage() {
     : "Never";
 
   return (
-    <s-page heading="Settings">
+    <s-page heading="Settings" inlineSize="large">
       <Form method="post">
         <s-button
           slot="primary-action"
@@ -173,145 +173,148 @@ export default function SettingsPage() {
           Save
         </s-button>
 
-        <s-section heading="KornitX">
-          <s-stack direction="block" gap="base">
-            <s-text-field
-              label="KornitX Ref ID"
-              name="kornitxRefId"
-              value={kornitxRefId}
-              onChange={(event) => setKornitxRefId(readPolarisValue(event))}
-              details="Your KornitX account code (REFID). Used for outbound stock and shipping API calls. Inbound webhook auth stays in .env."
-            />
-          </s-stack>
-        </s-section>
+        <div className={settingsStyles.page}>
+          <s-section heading="KornitX">
+            <s-stack direction="block" gap="base">
+              <s-text-field
+                label="KornitX Ref ID"
+                name="kornitxRefId"
+                value={kornitxRefId}
+                onChange={(event) => setKornitxRefId(readPolarisValue(event))}
+                details="Your KornitX account code (REFID). Used for outbound stock and shipping API calls. Inbound webhook auth stays in .env."
+              />
+            </s-stack>
+          </s-section>
 
-        <s-section heading="Shopify orders">
-          <s-stack direction="block" gap="base">
-            <s-select
-              label="B2B customer"
-              name="b2bCustomerId"
-              value={b2bCustomerId}
-              onChange={(event) => setB2bCustomerId(readPolarisValue(event))}
-            >
-              <s-option value="">Select a customer</s-option>
-              {customers.map((customer) => (
-                <s-option key={customer.id} value={customer.id}>
-                  {customer.displayName}
-                  {customer.email ? ` (${customer.email})` : ""}
-                </s-option>
-              ))}
-            </s-select>
-            <s-paragraph tone="neutral" color="subdued">
-              KornitX orders are created in Shopify with this customer attached.
-              The customer&apos;s saved address in Shopify is used if present.
-            </s-paragraph>
-          </s-stack>
-        </s-section>
+          <s-section heading="Shopify orders">
+            <s-stack direction="block" gap="base">
+              <s-select
+                label="B2B customer"
+                name="b2bCustomerId"
+                value={b2bCustomerId}
+                onChange={(event) => setB2bCustomerId(readPolarisValue(event))}
+              >
+                <s-option value="">Select a customer</s-option>
+                {customers.map((customer) => (
+                  <s-option key={customer.id} value={customer.id}>
+                    {customer.displayName}
+                    {customer.email ? ` (${customer.email})` : ""}
+                  </s-option>
+                ))}
+              </s-select>
+              <s-paragraph tone="neutral" color="subdued">
+                KornitX orders are created in Shopify with this customer attached.
+                The customer&apos;s saved address in Shopify is used if present.
+              </s-paragraph>
+            </s-stack>
+          </s-section>
 
-        <s-section heading="Inventory sync">
-          <s-stack direction="block" gap="base">
-            <s-checkbox
-              checked={usePrimaryInventoryLocation}
-              onChange={(event) =>
-                setUsePrimaryInventoryLocation(readPolarisChecked(event))
-              }
-              label="Use primary location"
-              details="When enabled, inventory qty and daily full feed use your store's primary Shopify location instead of the location selected below."
-            />
-            {usePrimaryInventoryLocation ? (
+          <s-section heading="Inventory sync">
+            <s-stack direction="block" gap="base">
+              <s-checkbox
+                checked={usePrimaryInventoryLocation}
+                onChange={(event) =>
+                  setUsePrimaryInventoryLocation(readPolarisChecked(event))
+                }
+                label="Use primary location"
+                details="When enabled, inventory qty and daily full feed use your store's primary Shopify location instead of the location selected below."
+              />
+              {usePrimaryInventoryLocation ? (
+                <input
+                  type="hidden"
+                  name="usePrimaryInventoryLocation"
+                  value="on"
+                />
+              ) : null}
               <input
                 type="hidden"
-                name="usePrimaryInventoryLocation"
-                value="on"
+                name="inventoryLocationId"
+                value={inventoryLocationId}
               />
-            ) : null}
-            <input
-              type="hidden"
-              name="inventoryLocationId"
-              value={inventoryLocationId}
-            />
-            <s-select
-              label="Inventory location"
-              value={inventoryLocationId}
-              disabled={usePrimaryInventoryLocation}
-              onChange={(event) => {
-                const value = readPolarisValue(event);
-                setInventoryLocationId(value);
-                if (value) {
-                  setUsePrimaryInventoryLocation(false);
-                }
-              }}
-            >
-              <s-option value="">Select a location</s-option>
-              {locations.map((location) => (
-                <s-option key={location.id} value={location.id}>
-                  {location.name}
-                  {location.isPrimary ? " (Primary)" : ""}
-                </s-option>
-              ))}
-            </s-select>
-
-            <s-checkbox
-              checked={dailyFullFeedEnabled}
-              onChange={(event) =>
-                setDailyFullFeedEnabled(readPolarisChecked(event))
-              }
-              label="Enable daily full inventory feed"
-              details="When enabled, all tracked products are sent to KornitX once per day at the UK time below — including quantity 0 for out-of-stock items."
-            />
-            {dailyFullFeedEnabled ? (
-              <input type="hidden" name="dailyFullFeedEnabled" value="on" />
-            ) : null}
-            <div className={settingsStyles.timeField}>
-              <label
-                className={settingsStyles.timeLabel}
-                htmlFor="daily-full-feed-time"
+              <s-select
+                label="Inventory location"
+                value={inventoryLocationId}
+                disabled={usePrimaryInventoryLocation}
+                onChange={(event) => {
+                  const value = readPolarisValue(event);
+                  setInventoryLocationId(value);
+                  if (value) {
+                    setUsePrimaryInventoryLocation(false);
+                  }
+                }}
               >
-                Daily full feed time (UK)
-              </label>
-              <input
-                id="daily-full-feed-time"
-                className={settingsStyles.timeInput}
-                type="time"
-                name="dailyFullFeedTime"
-                value={dailyFullFeedTime}
-                onChange={(event) =>
-                  setDailyFullFeedTime(event.currentTarget.value)
-                }
-                autoComplete="off"
-              />
-              <p className={settingsStyles.timeHint}>
-                UK time (Europe/London). Type a time or use the clock picker.
-                Runs at this UK clock time regardless of where the admin is.
-              </p>
-            </div>
-            <s-paragraph tone="neutral" color="subdued">
-              Last full feed: <s-text type="strong">{lastFullFeedLabel}</s-text>
-              {" "}(UK time)
-            </s-paragraph>
-            <s-paragraph tone="neutral" color="subdued">
-              Stock shown on the Inventory page is read from this location.
-              Selecting a location turns off &quot;Use primary location&quot;.
-              Out-of-stock items are still listed so you can track them for
-              KornitX sync.
-            </s-paragraph>
-          </s-stack>
-        </s-section>
-      </Form>
+                <s-option value="">Select a location</s-option>
+                {locations.map((location) => (
+                  <s-option key={location.id} value={location.id}>
+                    {location.name}
+                    {location.isPrimary ? " (Primary)" : ""}
+                  </s-option>
+                ))}
+              </s-select>
 
-      <s-section slot="aside" heading="Inbound webhook">
-        <s-paragraph>KornitX POSTs orders to:</s-paragraph>
-        <s-box padding="base" background="subdued" borderRadius="base">
-          <s-text type="strong">{webhookUrl}</s-text>
-        </s-box>
-        <s-paragraph tone="neutral" color="subdued">
-          Configure Basic auth or a Bearer token in <s-text type="strong">.env</s-text>{" "}
-          (<s-text type="strong">KORNITX_WEBHOOK_BASIC_*</s-text> or{" "}
-          <s-text type="strong">KORNITX_WEBHOOK_OAUTH_TOKEN</s-text>). Inventory
-          delta and daily full feed run via{" "}
-          <s-text type="strong">npm run worker:run-jobs</s-text>.
-        </s-paragraph>
-      </s-section>
+              <s-checkbox
+                checked={dailyFullFeedEnabled}
+                onChange={(event) =>
+                  setDailyFullFeedEnabled(readPolarisChecked(event))
+                }
+                label="Enable daily full inventory feed"
+                details="When enabled, all tracked products are sent to KornitX once per day at the UK time below — including quantity 0 for out-of-stock items."
+              />
+              {dailyFullFeedEnabled ? (
+                <input type="hidden" name="dailyFullFeedEnabled" value="on" />
+              ) : null}
+              <div className={settingsStyles.timeField}>
+                <label
+                  className={settingsStyles.timeLabel}
+                  htmlFor="daily-full-feed-time"
+                >
+                  Daily full feed time (UK)
+                </label>
+                <input
+                  id="daily-full-feed-time"
+                  className={settingsStyles.timeInput}
+                  type="time"
+                  name="dailyFullFeedTime"
+                  value={dailyFullFeedTime}
+                  onChange={(event) =>
+                    setDailyFullFeedTime(event.currentTarget.value)
+                  }
+                  autoComplete="off"
+                />
+                <p className={settingsStyles.timeHint}>
+                  UK time (Europe/London). Type a time or use the clock picker.
+                  Runs at this UK clock time regardless of where the admin is.
+                </p>
+              </div>
+              <s-paragraph tone="neutral" color="subdued">
+                Last full feed: <s-text type="strong">{lastFullFeedLabel}</s-text>
+                {" "}(UK time)
+              </s-paragraph>
+              <s-paragraph tone="neutral" color="subdued">
+                Stock shown on the Inventory page is read from this location.
+                Selecting a location turns off &quot;Use primary location&quot;.
+                Out-of-stock items are still listed so you can track them for
+                KornitX sync.
+              </s-paragraph>
+            </s-stack>
+          </s-section>
+
+          <s-section heading="Inbound webhook">
+            <s-paragraph>KornitX POSTs orders to:</s-paragraph>
+            <s-box padding="base" background="subdued" borderRadius="base">
+              <s-text type="strong">{webhookUrl}</s-text>
+            </s-box>
+            <s-paragraph tone="neutral" color="subdued">
+              Configure Basic auth or a Bearer token in{" "}
+              <s-text type="strong">.env</s-text>{" "}
+              (<s-text type="strong">KORNITX_WEBHOOK_BASIC_*</s-text> or{" "}
+              <s-text type="strong">KORNITX_WEBHOOK_OAUTH_TOKEN</s-text>).
+              Inventory delta and daily full feed run via{" "}
+              <s-text type="strong">npm run worker:run-jobs</s-text>.
+            </s-paragraph>
+          </s-section>
+        </div>
+      </Form>
     </s-page>
   );
 }

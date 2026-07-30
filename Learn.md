@@ -2,7 +2,7 @@
 
 A beginner-friendly guide to **how the code works today**. Read this to understand files, functions, data, and flows.
 
-_Last updated: daily full inventory feed (Phase 2) + UK timezone display._
+_Last updated: Inventory/Settings full-width layout + Inventory pagination._
 
 ---
 
@@ -160,6 +160,8 @@ Navigation is defined in `app/routes/app.tsx` (`<s-app-nav>` links).
 
 ### `/app/settings` — Settings (`app/routes/app.settings.tsx`)
 
+**Layout:** `s-page` with `inlineSize="large"` (full width, same as Orders/Inventory). No aside column — the inbound webhook URL lives in a main-column section.
+
 **Loader:**
 
 1. `getOrCreateAppSettings(session.shop)` — ensures one `AppSettings` row per shop
@@ -181,11 +183,9 @@ Navigation is defined in `app/routes/app.tsx` (`<s-app-nav>` links).
 
 **Inventory sync section:** choose a location **or** enable **Use primary location** (default off). Selecting a location automatically turns off the primary toggle. Optionally enable **daily full inventory feed** and set a UK time (no default) — validation requires time + a resolvable location when the feed is on.
 
-Inbound webhook auth is configured in **`.env`** only. Inventory delta and daily full feed run via **`npm run worker:run-jobs`**.
+**Inbound webhook section:** shows the full KornitX webhook URL built from `SHOPIFY_APP_URL`. Auth is configured in **`.env`** only. Inventory delta and daily full feed run via **`npm run worker:run-jobs`**.
 
 **Helper files:** `app/models/app-settings.server.ts`, `shared/uk-time.ts`
-
-The aside panel shows the full KornitX webhook URL built from `SHOPIFY_APP_URL`.
 
 All merchant-facing timestamps (orders received date, retry messages, dashboard worker runs, last full feed) use **`Europe/London`** via `formatUkDateTime`.
 
@@ -271,6 +271,8 @@ For quick local testing without curl, run `npm run simulate:kornitx-orders`. It 
 
 **Story:** Merchant checks which variants send stock to KornitX. Only variants **with a barcode (EAN)** appear. Both **available and unavailable** (out-of-stock) items are listed.
 
+**Layout:** `s-page` with `inlineSize="large"` (full width). Filter card + table card match the Orders page pattern. “How it works” sits in the main column below the table (no aside).
+
 **Location:** Stock is read from the effective inventory location:
 
 1. If **Use primary location** is enabled in Settings → Shopify primary location
@@ -284,11 +286,15 @@ If no location is configured, the page shows a banner and an empty table.
 2. `fetchProductVariantsWithInventory(admin, locationId)` — variants with barcodes and available qty at that location
 3. `getTrackedVariantIds(shop)` — which variant IDs are currently enabled
 
+The loader still fetches **all** barcoded variants from Shopify on enter/reload (and when non-page filters change). Pagination is **client-side** over that cached list.
+
 **UI columns:** Track checkbox, Product, Variant, SKU, EAN, **Qty**, **Availability** (Available / Unavailable).
 
-**Filters:** search (`q` URL param) by product name, variant title, SKU, or barcode (debounced as you type); availability (All / Available / Unavailable); tracking (All / Tracked / Untracked — matches current checkbox selection). Filters apply client-side; URL is shareable/bookmarkable.
+**Filters (URL params):** `q`, `availability`, `tracking`, `page`, `pageSize` (10 / 25 / 50; default 10). Search is debounced as you type and filters immediately client-side. Availability and tracking dropdowns update the URL. Changing any filter resets `page` to 1. Tracking filter matches the **current checkbox selection** (draft), not only saved DB state.
 
-**List scope:** all barcoded variants in the shop. Qty and availability reflect the configured location only. A future option may narrow the list to variants with an inventory level at that location (including qty 0); see plan doc.
+**Pagination:** After filters, `paginateInventoryVariants()` slices the list for the current page. Footer shows variants-per-page select + Previous/Next (same UX as Orders). `shouldRevalidate` skips the Shopify re-fetch when only `page` / `pageSize` change, so paging stays fast.
+
+**List scope:** all barcoded variants in the shop. Qty and availability reflect the configured location only.
 
 **Action:**
 
@@ -299,6 +305,8 @@ If no location is configured, the page shows a banner and an empty table.
 
 - `app/models/tracked-products.server.ts`
 - `app/services/shopify-inventory.server.ts` — GraphQL inventory at a location
+- `shared/inventory-list-filters.ts` — parse filters, filter rows, paginate
+- `app/components/inventory/inventory-filters.tsx` — filter bar UI
 
 ---
 

@@ -47,6 +47,8 @@ export function InventoryFilters({
         params.set(key, value);
       }
     }
+    // Filter changes always restart at page 1.
+    params.delete("page");
     submit(params, { method: "get", replace: true });
   };
 
@@ -63,7 +65,12 @@ export function InventoryFilters({
   const clearFilters = () => {
     onSearchQueryChange("");
     if (debounceRef.current) clearTimeout(debounceRef.current);
-    submit({}, { method: "get", replace: true });
+    const params = new URLSearchParams();
+    const pageSize = searchParams.get("pageSize");
+    if (pageSize && pageSize !== "10") {
+      params.set("pageSize", pageSize);
+    }
+    submit(params, { method: "get", replace: true });
   };
 
   return (
