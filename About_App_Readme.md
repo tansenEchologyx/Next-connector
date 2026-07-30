@@ -2,7 +2,7 @@
 
 Documentation of **features built so far** in the Next Connector Shopify app (KornitX / Next Label Plus integration).
 
-_Last updated: Inventory/Settings full-width layout + Inventory pagination._
+_Last updated: Inventory “Show tracked first” filter toggle._
 
 ---
 
@@ -49,7 +49,7 @@ This file lists only what is **implemented today**.
 |-------|---------|
 | `/app` | Dashboard — order counts, unsent inventory deltas, recent worker runs, setup warnings |
 | `/app/settings` | Full-width page — KornitX Ref ID, B2B customer, **Inventory sync** (location, use-primary toggle, daily full-feed enable + UK time), inbound webhook URL |
-| `/app/inventory` | Full-width paginated product table with checkboxes — **all shop barcoded variants**; qty/availability at configured location; search + availability + tracking filters; page size 10/25/50 |
+| `/app/inventory` | Full-width paginated product table with checkboxes — **all shop barcoded variants**; qty/availability at configured location; search + availability + tracking filters; page size 10/25/50; optional **Show tracked first** (default off; reorder after Save when on) |
 | `/app/orders` | Full-width paginated KornitX order list — times in **UK timezone**; search/filters, issues, fulfillment actions |
 
 ### 4. Webhooks

@@ -17,6 +17,19 @@ function readPolarisValue(event: unknown): string {
   return "";
 }
 
+function readPolarisChecked(event: unknown): boolean {
+  if (!event || typeof event !== "object") return false;
+  const e = event as {
+    currentTarget?: { checked?: boolean } | null;
+    target?: { checked?: boolean } | null;
+    detail?: { checked?: boolean };
+  };
+  if (e.detail?.checked != null) return Boolean(e.detail.checked);
+  const el = e.currentTarget ?? e.target;
+  if (el && typeof el.checked === "boolean") return el.checked;
+  return false;
+}
+
 type InventoryFiltersProps = {
   filters: InventoryListFilters;
   searchQuery: string;
@@ -48,6 +61,18 @@ export function InventoryFilters({
       }
     }
     // Filter changes always restart at page 1.
+    params.delete("page");
+    submit(params, { method: "get", replace: true });
+  };
+
+  const handleTrackedFirstChange = (checked: boolean) => {
+    const params = new URLSearchParams(searchParams);
+    // Default is off — omit from URL when disabled.
+    if (checked) {
+      params.set("trackedFirst", "1");
+    } else {
+      params.delete("trackedFirst");
+    }
     params.delete("page");
     submit(params, { method: "get", replace: true });
   };
@@ -124,6 +149,17 @@ export function InventoryFilters({
             Clear
           </s-button>
         </div>
+      </div>
+
+      <div className={styles.filterToggleRow}>
+        <s-checkbox
+          checked={filters.trackedFirst}
+          onChange={(event) =>
+            handleTrackedFirstChange(readPolarisChecked(event))
+          }
+          label="Show tracked first"
+          details="Saved tracked variants at the top when on; original order when off. Reorder after Save still applies when this is on."
+        />
       </div>
     </div>
   );

@@ -5,6 +5,12 @@
   width: 100%;
 }
 
+.toolbar {
+  display: flex;
+  justify-content: flex-end;
+  width: 100%;
+}
+
 .timeField {
   display: flex;
   flex-direction: column;

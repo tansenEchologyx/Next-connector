@@ -32,6 +32,7 @@ import {
   hasActiveInventoryFilters,
   paginateInventoryVariants,
   parseInventoryListFilters,
+  sortInventoryVariantsWithTrackedFirst,
 } from "../../shared/inventory-list-filters";
 import { InventoryFilters } from "../components/inventory/inventory-filters";
 import styles from "../components/inventory/inventory-page.module.css";
@@ -147,7 +148,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
   return { ok: true as const, trackedCount: selectedVariants.length };
 };
 
-/** Skip Shopify re-fetch when only page / pageSize URL params change. */
+/** Skip Shopify re-fetch when only client-side list URL params change. */
 export function shouldRevalidate({
   currentUrl,
   nextUrl,
@@ -158,14 +159,15 @@ export function shouldRevalidate({
     return defaultShouldRevalidate;
   }
 
-  const stripPageParams = (url: URL) => {
+  const stripClientListParams = (url: URL) => {
     const params = new URLSearchParams(url.searchParams);
     params.delete("page");
     params.delete("pageSize");
+    params.delete("trackedFirst");
     return params.toString();
   };
 
-  if (stripPageParams(currentUrl) === stripPageParams(nextUrl)) {
+  if (stripClientListParams(currentUrl) === stripClientListParams(nextUrl)) {
     return false;
   }
 
@@ -202,14 +204,29 @@ export default function InventoryPage() {
     setSearchQuery(filters.q);
   }, [filters.q]);
 
+  // Keep draft checkboxes in sync after Save (loader returns updated IDs).
+  useEffect(() => {
+    setSelected(new Set(trackedVariantIds));
+  }, [trackedVariantIds]);
+
   const activeFilters = useMemo(
     () => ({ ...filters, q: searchQuery }),
     [filters, searchQuery],
   );
 
+  const savedTrackedIds = useMemo(
+    () => new Set(trackedVariantIds),
+    [trackedVariantIds],
+  );
+
+  const sortedVariants = useMemo(() => {
+    if (!filters.trackedFirst) return variants;
+    return sortInventoryVariantsWithTrackedFirst(variants, savedTrackedIds);
+  }, [variants, savedTrackedIds, filters.trackedFirst]);
+
   const filteredVariants = useMemo(
-    () => filterInventoryVariants(variants, activeFilters, selected),
-    [variants, activeFilters, selected],
+    () => filterInventoryVariants(sortedVariants, activeFilters, selected),
+    [sortedVariants, activeFilters, selected],
   );
 
   const {
@@ -278,15 +295,6 @@ export default function InventoryPage() {
   return (
     <s-page heading="Inventory sync" inlineSize="large">
       <Form method="post">
-        <s-button
-          slot="primary-action"
-          type="submit"
-          variant="primary"
-          {...(isSaving ? { loading: true } : {})}
-        >
-          Save selection
-        </s-button>
-
         {[...selected].map((variantId) => (
           <input
             key={variantId}
@@ -297,18 +305,32 @@ export default function InventoryPage() {
         ))}
 
         <div className={styles.page}>
-          {locationLabel ? (
-            <s-paragraph>
-              Stock at: <s-text type="strong">{locationLabel}</s-text>
-              {locationMode === "primary" ? (
-                <>
-                  {" "}
-                  — from <s-text type="strong">Use primary location</s-text> in
-                  Settings
-                </>
+          <div className={styles.toolbar}>
+            <div className={styles.toolbarLocation}>
+              {locationLabel ? (
+                <s-paragraph>
+                  Stock at: <s-text type="strong">{locationLabel}</s-text>
+                  {locationMode === "primary" ? (
+                    <>
+                      {" "}
+                      — from{" "}
+                      <s-text type="strong">Use primary location</s-text> in
+                      Settings
+                    </>
+                  ) : null}
+                </s-paragraph>
               ) : null}
-            </s-paragraph>
-          ) : null}
+            </div>
+            <div className={styles.toolbarAction}>
+              <s-button
+                type="submit"
+                variant="primary"
+                {...(isSaving ? { loading: true } : {})}
+              >
+                Save selection
+              </s-button>
+            </div>
+          </div>
 
           {locationWarning === "no_location" ? (
             <s-box padding="base" background="subdued" borderRadius="base">

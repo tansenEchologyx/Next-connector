@@ -164,16 +164,17 @@ export default function SettingsPage() {
   return (
     <s-page heading="Settings" inlineSize="large">
       <Form method="post">
-        <s-button
-          slot="primary-action"
-          type="submit"
-          variant="primary"
-          {...(isSaving ? { loading: true } : {})}
-        >
-          Save
-        </s-button>
-
         <div className={settingsStyles.page}>
+          <div className={settingsStyles.toolbar}>
+            <s-button
+              type="submit"
+              variant="primary"
+              {...(isSaving ? { loading: true } : {})}
+            >
+              Save
+            </s-button>
+          </div>
+
           <s-section heading="KornitX">
             <s-stack direction="block" gap="base">
               <s-text-field

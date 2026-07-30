@@ -2,7 +2,7 @@
 
 A beginner-friendly guide to **how the code works today**. Read this to understand files, functions, data, and flows.
 
-_Last updated: Inventory/Settings full-width layout + Inventory pagination._
+_Last updated: Inventory “Show tracked first” filter toggle._
 
 ---
 
@@ -288,11 +288,13 @@ If no location is configured, the page shows a banner and an empty table.
 
 The loader still fetches **all** barcoded variants from Shopify on enter/reload (and when non-page filters change). Pagination is **client-side** over that cached list.
 
+**Sort order:** Filter toggle **Show tracked first** (URL `trackedFirst`, default off). When on (`trackedFirst=1`), `sortInventoryVariantsWithTrackedFirst()` puts **saved** tracked variants (from `trackedVariantIds` in the loader / DB) at the top, then sorts by product title + variant title. When off, the list keeps the original Shopify loader order. Checking or unchecking Track does **not** move rows immediately — with the toggle on, the list only reorders after **Save selection**. Draft checkbox state still drives the tracking filter.
+
 **UI columns:** Track checkbox, Product, Variant, SKU, EAN, **Qty**, **Availability** (Available / Unavailable).
 
-**Filters (URL params):** `q`, `availability`, `tracking`, `page`, `pageSize` (10 / 25 / 50; default 10). Search is debounced as you type and filters immediately client-side. Availability and tracking dropdowns update the URL. Changing any filter resets `page` to 1. Tracking filter matches the **current checkbox selection** (draft), not only saved DB state.
+**Filters (URL params):** `q`, `availability`, `tracking`, `trackedFirst` (`1` when on; omitted when off), `page`, `pageSize` (10 / 25 / 50; default 10). Search is debounced as you type and filters immediately client-side. Availability and tracking dropdowns update the URL. Changing any filter resets `page` to 1. Tracking filter matches the **current checkbox selection** (draft), not only saved DB state.
 
-**Pagination:** After filters, `paginateInventoryVariants()` slices the list for the current page. Footer shows variants-per-page select + Previous/Next (same UX as Orders). `shouldRevalidate` skips the Shopify re-fetch when only `page` / `pageSize` change, so paging stays fast.
+**Pagination:** After sort + filters, `paginateInventoryVariants()` slices the list for the current page. Footer shows variants-per-page select + Previous/Next (same UX as Orders). `shouldRevalidate` skips the Shopify re-fetch when only `page` / `pageSize` / `trackedFirst` change, so paging and the sort toggle stay fast.
 
 **List scope:** all barcoded variants in the shop. Qty and availability reflect the configured location only.
 
@@ -300,12 +302,13 @@ The loader still fetches **all** barcoded variants from Shopify on enter/reload 
 
 1. Reads selected variant IDs from hidden form inputs
 2. `syncTrackedProducts(shop, selectedVariants)` — upserts `TrackedProduct`, toggles `enabled`, creates `InventorySyncState` if missing
+3. After save, loader re-runs; draft `selected` syncs from the new `trackedVariantIds`, and sort order updates
 
 **Helper files:**
 
 - `app/models/tracked-products.server.ts`
 - `app/services/shopify-inventory.server.ts` — GraphQL inventory at a location
-- `shared/inventory-list-filters.ts` — parse filters, filter rows, paginate
+- `shared/inventory-list-filters.ts` — parse filters, sort tracked-first, filter rows, paginate
 - `app/components/inventory/inventory-filters.tsx` — filter bar UI
 
 ---

@@ -5,6 +5,25 @@
   width: 100%;
 }
 
+.toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  width: 100%;
+}
+
+.toolbarLocation {
+  flex: 1 1 200px;
+  min-width: 0;
+}
+
+.toolbarAction {
+  flex: 0 0 auto;
+  margin-left: auto;
+}
+
 .filterCard {
   padding: 16px;
   background: var(--p-color-bg-surface, #fff);
@@ -86,6 +105,11 @@
   flex: 1 0 auto;
   align-self: flex-end;
   margin-bottom: 2px;
+}
+
+.filterToggleRow {
+  margin-top: 12px;
+  width: 100%;
 }
 
 .footer {

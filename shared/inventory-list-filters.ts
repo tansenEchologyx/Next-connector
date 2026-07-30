@@ -17,6 +17,8 @@ export type InventoryListFilters = {
   q: string;
   availability: InventoryAvailabilityFilter;
   tracking: InventoryTrackingFilter;
+  /** When true, saved tracked variants appear at the top of the list. */
+  trackedFirst: boolean;
   page: number;
   pageSize: InventoryPageSize;
 };
@@ -26,6 +28,12 @@ export function parseInventoryListFilters(
 ): InventoryListFilters {
   const availability = searchParams.get("availability");
   const tracking = searchParams.get("tracking");
+  const trackedFirstParam = searchParams.get("trackedFirst");
+  // Default off; only "1" / "true" / "on" turn it on.
+  const trackedFirst =
+    trackedFirstParam === "1" ||
+    trackedFirstParam === "true" ||
+    trackedFirstParam === "on";
   const page = Math.max(1, Number(searchParams.get("page") ?? "1") || 1);
   const rawPageSize = Number(searchParams.get("pageSize") ?? "10");
   const pageSize = (INVENTORY_PAGE_SIZES as readonly number[]).includes(
@@ -42,6 +50,7 @@ export function parseInventoryListFilters(
         : "all",
     tracking:
       tracking === "tracked" || tracking === "untracked" ? tracking : "all",
+    trackedFirst,
     page,
     pageSize,
   };
@@ -84,6 +93,24 @@ export function filterInventoryVariants<T extends InventoryVariantForFilter>(
     const haystack =
       `${variant.productTitle} ${variant.variantTitle} ${variant.sku ?? ""} ${variant.barcode ?? ""}`.toLowerCase();
     return haystack.includes(query);
+  });
+}
+
+/**
+ * Sort so saved/tracked variants appear first. Does not use draft checkbox
+ * state — call with loader `trackedVariantIds` so toggles do not reorder until Save.
+ */
+export function sortInventoryVariantsWithTrackedFirst<
+  T extends InventoryVariantForFilter,
+>(variants: T[], savedTrackedVariantIds: ReadonlySet<string>): T[] {
+  return [...variants].sort((a, b) => {
+    const aTracked = savedTrackedVariantIds.has(a.variantId) ? 0 : 1;
+    const bTracked = savedTrackedVariantIds.has(b.variantId) ? 0 : 1;
+    if (aTracked !== bTracked) return aTracked - bTracked;
+
+    const byProduct = a.productTitle.localeCompare(b.productTitle);
+    if (byProduct !== 0) return byProduct;
+    return a.variantTitle.localeCompare(b.variantTitle);
   });
 }
 
