@@ -29,6 +29,7 @@ export async function processKornitxOrder(
   await markOrderCreated(
     order.id,
     result.shopifyOrderId,
+    result.shopifyOrderName,
     result.lineItemMappings,
   );
 

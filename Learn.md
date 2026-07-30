@@ -2,7 +2,7 @@
 
 A beginner-friendly guide to **how the code works today**. Read this to understand files, functions, data, and flows.
 
-_Last updated: coalesced batched fulfillment + configurable fulfillment delay._
+_Last updated: daily full inventory feed (Phase 2) + UK timezone display._
 
 ---
 
@@ -58,6 +58,9 @@ next-connector/
 │   ├── sync-job-types.ts
 │   ├── retry.ts
 │   ├── inventory-sync.ts   ← INVENTORY_SYNC_INTERVAL_SECONDS
+│   ├── inventory-location.ts ← effective inventory location (selected vs primary)
+│   ├── inventory-list-filters.ts ← inventory page search/filter helpers
+│   ├── uk-time.ts          ← Europe/London formatting + daily full-feed schedule
 │   └── fulfillment-sync.ts ← FULFILLMENT_DELAY_SECONDS
 ├── workers/                ← Background jobs (run separately)
 │   ├── run-jobs.ts         ← unified worker (process_order + send_fulfillment)
@@ -88,14 +91,14 @@ Prisma turns `schema.prisma` into TypeScript types and SQL tables.
 | Table | What it stores |
 |-------|----------------|
 | `Session` | Shopify login sessions (required by Shopify app template) |
-| `AppSettings` | One row per shop: KornitX Ref ID and B2B customer (editable in `/app/settings`) |
+| `AppSettings` | One row per shop: KornitX Ref ID, B2B customer, inventory location, primary toggle, daily full-feed enable/time/`lastDailyFullFeedAt` |
 | `TrackedProduct` | Products you checkbox for inventory sync (EAN/barcode) — saved from `/app/inventory` |
 | `InventorySyncState` | Legacy per-tracked-product sync flags (from inventory UI) |
 | `InventoryDelta` | One row per shop+EAN with latest qty; `status = unsent` until a future sync worker sends it |
 | `KornitxOrder` | One row per KornitX batch order (`kornitxId` unique) |
 | `KornitxOrderItem` | Line items inside a KornitX order |
 | `ShippingStatusEvent` | “Tell KornitX this order shipped/cancelled” queue |
-| `SyncJob` | Work queue: `process_order` or `send_fulfillment`, with retry backoff |
+| `SyncJob` | Work queue: `process_order`, `send_fulfillment`, `send_inventory_delta`, `send_inventory_full_feed`, with retry backoff |
 | `JobRun` | Log line every time a worker starts/finishes |
 
 ### Order status flow
@@ -162,22 +165,29 @@ Navigation is defined in `app/routes/app.tsx` (`<s-app-nav>` links).
 1. `getOrCreateAppSettings(session.shop)` — ensures one `AppSettings` row per shop
 2. `fetchLocations(admin)` and `fetchCustomers(admin)` — dropdown options from Shopify
 
-**Action:** Saves `kornitxRefId` and `b2bCustomerId`.
+**Action:** Saves `kornitxRefId`, `b2bCustomerId`, `inventoryLocationId`, `usePrimaryInventoryLocation`, `dailyFullFeedEnabled`, and `dailyFullFeedTime`.
 
 **Fields on the page:**
 
 | Field | Database column | Used today? |
 |-------|-----------------|-------------|
-| KornitX Ref ID | `kornitxRefId` | Stored for future outbound stock/shipping API — **not read by workers yet** |
+| KornitX Ref ID | `kornitxRefId` | **Yes** — outbound KornitX stock/shipping API |
 | B2B customer | `b2bCustomerId` | **Yes** — `run-jobs` → Shopify `orderCreate` |
+| Inventory location | `inventoryLocationId` | **Yes** — Inventory page qty + daily full feed (ignored when primary toggle is on) |
+| Use primary location | `usePrimaryInventoryLocation` | **Yes** — use Shopify primary location instead of the dropdown |
+| Enable daily full feed | `dailyFullFeedEnabled` | **Yes** — master toggle for once-per-day full feed |
+| Daily full feed time (UK) | `dailyFullFeedTime` | **Yes** — native time input (`type="time"`); type or pick HH:mm in Europe/London; required when enabled |
+| Last full feed | `lastDailyFullFeedAt` | Read-only — shown in UK time |
 
-Other columns still exist in the database (`deltaIntervalMinutes`, `inventoryLocationId`, etc.) for future phases but are **not** on the Settings page.
+**Inventory sync section:** choose a location **or** enable **Use primary location** (default off). Selecting a location automatically turns off the primary toggle. Optionally enable **daily full inventory feed** and set a UK time (no default) — validation requires time + a resolvable location when the feed is on.
 
-Inbound webhook auth is configured in **`.env`** only. Stock sync runs via **`npm run worker:stock-delta`** on a schedule (EventBridge in production), not from Settings.
+Inbound webhook auth is configured in **`.env`** only. Inventory delta and daily full feed run via **`npm run worker:run-jobs`**.
 
-**Helper file:** `app/models/app-settings.server.ts`
+**Helper files:** `app/models/app-settings.server.ts`, `shared/uk-time.ts`
 
 The aside panel shows the full KornitX webhook URL built from `SHOPIFY_APP_URL`.
+
+All merchant-facing timestamps (orders received date, retry messages, dashboard worker runs, last full feed) use **`Europe/London`** via `formatUkDateTime`.
 
 ---
 
@@ -253,33 +263,65 @@ curl -X POST "https://<tunnel-url>/webhooks/kornitx/orders" \
 
 Check Prisma Studio or `/app/orders` to see the saved order.
 
+For quick local testing without curl, run `npm run simulate:kornitx-orders`. It inserts three sample orders (one `single`, two `batched`) and enqueues `process_order` SyncJobs.
+
 ---
 
 ### `/app/inventory` — Tracked products (`app/routes/app.inventory.tsx`)
 
-**Story:** Merchant checks which variants send stock to KornitX. Only variants **with a barcode (EAN)** appear.
+**Story:** Merchant checks which variants send stock to KornitX. Only variants **with a barcode (EAN)** appear. Both **available and unavailable** (out-of-stock) items are listed.
+
+**Location:** Stock is read from the effective inventory location:
+
+1. If **Use primary location** is enabled in Settings → Shopify primary location
+2. Otherwise → the location selected in Settings (`inventoryLocationId`)
+
+If no location is configured, the page shows a banner and an empty table.
 
 **Loader:**
 
-1. `fetchProductVariants(admin)` — all product variants from Shopify
-2. `getTrackedVariantIds(shop)` — which variant IDs are currently enabled
+1. `getOrCreateAppSettings(shop)` + `resolveEffectiveInventoryLocation` (`shared/inventory-location.ts`)
+2. `fetchProductVariantsWithInventory(admin, locationId)` — variants with barcodes and available qty at that location
+3. `getTrackedVariantIds(shop)` — which variant IDs are currently enabled
+
+**UI columns:** Track checkbox, Product, Variant, SKU, EAN, **Qty**, **Availability** (Available / Unavailable).
+
+**Filters:** search (`q` URL param) by product name, variant title, SKU, or barcode (debounced as you type); availability (All / Available / Unavailable); tracking (All / Tracked / Untracked — matches current checkbox selection). Filters apply client-side; URL is shareable/bookmarkable.
+
+**List scope:** all barcoded variants in the shop. Qty and availability reflect the configured location only. A future option may narrow the list to variants with an inventory level at that location (including qty 0); see plan doc.
 
 **Action:**
 
 1. Reads selected variant IDs from hidden form inputs
 2. `syncTrackedProducts(shop, selectedVariants)` — upserts `TrackedProduct`, toggles `enabled`, creates `InventorySyncState` if missing
 
-**Helper file:** `app/models/tracked-products.server.ts`
+**Helper files:**
+
+- `app/models/tracked-products.server.ts`
+- `app/services/shopify-inventory.server.ts` — GraphQL inventory at a location
 
 ---
 
-### `/app/orders` — KornitX order log (`app/routes/app.orders.tsx`)
+### `/app/orders` — KornitX order list (`app/routes/app.orders.tsx`)
 
-**Loader:** `listRecentOrders(100)` — orders with line items, newest first.
+**Loader:** reads URL search params via `parseOrderListFilters()`, then `listOrders(filters)` — paginated orders with items, shipping events, and active issues.
 
-**Action (retry):** `retryFailedOrder(shop, orderId)` sets order `status = received`, clears `failureReason`, and enqueues a `process_order` SyncJob.
+**Filters (URL params):** `q`, `status`, `shape`, `fulfillment`, `sendFulfillment`, `sort`, `page`, `pageSize`.
 
-**Helper file:** `app/models/kornitx-orders.server.ts`
+**Table columns:** issue indicator, KornitX ID, order creation status, shape, items, Shopify order name, received date, fulfillment status (Shopify-side), send fulfillment (KornitX sync: unsent / sent / failed), actions.
+
+**Issue popover:** alert icon when the order has open `KornitxOrderIssue` rows (red for errors, amber for warnings only). Click to see ERROR/WARNING messages and timestamps. Issues clear when the underlying problem is resolved (order created, fulfillment sent, etc.). Retryable failures (Shopify/network for order creation, KornitX API for fulfillment send) open a **WARNING** such as `Order creation failed: … 2nd retry at 28/07/2026, 20:45:00.` or `Fulfillment send to KornitX failed: … 2nd retry at …`; terminal failures show **ERROR**.
+
+**Actions:**
+- **Retry** — failed order creation; opens a confirmation modal, then `retryFailedOrder` re-enqueues `process_order` for the worker’s next cycle
+- **Resend** (send icon) — unsent/failed fulfillment send; opens a confirmation modal, then `resendFulfillmentForOrder` force-resets the order’s `send_fulfillment` SyncJob (`attemptCount` → 0, `nextRunAt` → now or order received + delay) even if the job is already `pending` from automatic retry backoff
+
+**Display helpers:** `shared/order-display.ts` derives fulfillment status from shipping events and send-fulfillment status from unsent events + SyncJob state.
+
+**Helper files:**
+- `app/models/kornitx-orders.server.ts` — list, retry, resend
+- `app/models/kornitx-order-issues.server.ts` — create/resolve issues
+- `app/components/orders/*` — filters, badges, issue popover UI
 
 ---
 
@@ -289,9 +331,16 @@ Shared Admin GraphQL helpers used by Settings and Inventory:
 
 | Function | Returns |
 |----------|---------|
-| `fetchLocations(admin)` | Shopify location id + name |
+| `fetchLocations(admin)` | Shopify location id, name, and `isPrimary` |
 | `fetchCustomers(admin)` | Customer id + display name |
-| `fetchProductVariants(admin)` | Flat list of variants with SKU and barcode |
+| `fetchProductVariants(admin)` | Flat list of variants with SKU and barcode (legacy; Inventory page uses `shopify-inventory.server.ts` instead) |
+
+### `app/services/shopify-inventory.server.ts`
+
+| Function | Returns |
+|----------|---------|
+| `fetchPrimaryLocation(admin)` | Primary Shopify location id + name |
+| `fetchProductVariantsWithInventory(admin, locationId)` | Barcoded variants with `availableQuantity` and `isAvailable` at the given location |
 
 ---
 
@@ -360,6 +409,7 @@ Webhooks enqueue rows; `run-jobs` claims and processes them.
 | `process_order` | KornitX inbound webhook, manual retry | Shopify `orderCreate` |
 | `send_fulfillment` | Shopify fulfilled/cancelled webhooks (one coalesced job per KornitX order) | KornitX shipping PUT — batched orders send all unsent line items in one request |
 | `send_inventory_delta` | Inventory webhook (one coalesced job per shop) | KornitX stock PUT |
+| `send_inventory_full_feed` | `run-jobs` scheduler when UK daily time is due | KornitX stock PUT (all tracked EANs) |
 
 **SyncJob fields:** `status` (`pending` → `processing` → `completed` or `failed`), `attemptCount`, `nextRunAt`, `runAfter`, `lastError`, `idempotencyKey`.
 
@@ -376,8 +426,8 @@ Webhooks enqueue rows; `run-jobs` claims and processes them.
 | `claimReceivedOrders(limit?)` | Legacy helper (unused by `run-jobs`) |
 | `markOrderProcessing(orderId)` | Sets status `processing` when job starts |
 | `markOrderReceivedForRetry(orderId, reason)` | Sets status `received` when job will retry |
-| `markOrderCreated(...)` | Sets status `created`, saves Shopify IDs |
-| `markOrderFailed(orderId, reason)` | Terminal failure on order row |
+| `markOrderCreated(...)` | Sets status `created`, saves Shopify order id + name, resolves order-processing issues |
+| `markOrderFailed(orderId, reason)` | Terminal failure on order row; creates ERROR issue |
 
 ---
 
@@ -392,9 +442,10 @@ Webhooks enqueue rows; `run-jobs` claims and processes them.
 1. `backfillProcessOrderJobs()` — enqueue missing jobs for `received` orders
 2. `reclaimStaleSyncJobs()` — reset jobs stuck in `processing` > 15 min
 3. Loop: `claimNextDueSyncJob()` → `dispatchSyncJob()` until no due jobs
-4. Priority: `process_order` → `send_fulfillment` → `send_inventory_delta`
-5. **`send_inventory_delta`:** skips until `lastInventorySyncAt + INVENTORY_SYNC_INTERVAL_SECONDS`; PUTs unsent `InventoryDelta` rows in batches of 100
-6. **`send_fulfillment`:** skips until `orderReceivedAt + FULFILLMENT_DELAY_SECONDS` (default 20 min); loads all unsent `ShippingStatusEvent` rows for the order and sends one PUT (batched: `PUT /order-item/status` with full item array)
+4. Priority: `process_order` → `send_fulfillment` → `send_inventory_delta` → `send_inventory_full_feed`
+5. **`send_inventory_delta`:** skips until `lastInventorySyncAt + INVENTORY_SYNC_INTERVAL_SECONDS`; PUTs unsent `InventoryDelta` rows in batches of 100. After each successful batch, rows in that batch are marked `sent` only if snapshot `quantity` and `updatedAt` still match. `lastInventorySyncAt` advances when any batch succeeds. If a later batch fails, earlier batches stay marked sent and leftovers retry at the next interval (not exponential backoff). Total failure on the first batch still uses retry backoff. Qty **0** is sent when stock drops to zero.
+6. **`send_inventory_full_feed`:** enqueued when Settings has daily full feed enabled and today's UK scheduled time has passed (and not yet successfully run today). Fetches live qty for every enabled `TrackedProduct` at the effective location and PUTs all EANs (including **0** for out of stock). Partial failure stores remaining EANs and retries with exponential backoff.
+6. **`send_fulfillment`:** skips until `orderReceivedAt + FULFILLMENT_DELAY_SECONDS` (default 20 min); loads all unsent `ShippingStatusEvent` rows for the order and sends one PUT (batched: `PUT /order-item/status` with full item array). On retryable failure, upserts a WARNING issue; on terminal failure, upserts an ERROR issue. Success resolves fulfillment issues.
 7. Writes `JobRun` metadata per cycle
 
 **Run locally (runs until Ctrl+C):**
@@ -425,19 +476,25 @@ Optional `.env`: `WORKER_POLL_INTERVAL_MS=300000` (5 min default).
 
 **Sending:** handled by **`run-jobs`** when `INVENTORY_SYNC_INTERVAL_SECONDS` has elapsed since `AppSettings.lastInventorySyncAt` (default **1800** = 30 min).
 
+**Mid-run race:** the handler snapshots unsent rows, sends them in batches of 100, and marks each batch's rows `sent` only if `quantity` and `updatedAt` are unchanged. Example: snapshot has qty 10, webhook updates to 15 during the run → KornitX gets 10, row stays `unsent` with 15, corrected on the next interval run (~30 min later).
+
+**Partial batch failure:** if batch 1 succeeds and batch 2 fails, batch 1 rows are already marked `sent`, `lastInventorySyncAt` is updated, and batch 2 rows retry at the next interval — batch 1 is not resent. If the first batch fails, nothing is marked sent and normal exponential backoff applies.
+
 ---
 
 ### `worker:stock-full-feed`
 
 **File:** `workers/stock-full-feed.ts`
 
-**Story:** Once per day, send **all** tracked products’ stock to KornitX (spec requirement).
+**Story:** Once per UK day (when enabled in Settings), send **all** tracked products’ live stock to KornitX — including **`quantity_available: 0`** for out-of-stock items (omitting an EAN does not clear stock at KornitX).
 
 **Today:**
 
-1. Loads all `TrackedProduct` where `enabled = true`
-2. Updates sync baseline in database
-3. Logs batch count
+1. `enqueueDailyFullFeedJobsIfDue()` creates a `send_inventory_full_feed` SyncJob for each due shop (idempotency key includes UK calendar date)
+2. Actual GraphQL fetch + KornitX PUT runs inside **`run-jobs`** via `handleSendInventoryFullFeedJob`
+3. On full success, `AppSettings.lastDailyFullFeedAt` is updated so the job does not re-fire the same UK day
+
+**CLI:** `npm run worker:stock-full-feed` only enqueues due jobs; keep `npm run worker:run-jobs` running to process them.
 
 ---
 

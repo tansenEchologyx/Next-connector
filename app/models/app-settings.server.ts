@@ -32,6 +32,10 @@ export async function getOrCreateAppSettings(shop: string): Promise<AppSettings>
 export type AppSettingsUpdate = {
   kornitxRefId?: string;
   b2bCustomerId?: string;
+  inventoryLocationId?: string;
+  usePrimaryInventoryLocation?: boolean;
+  dailyFullFeedEnabled?: boolean;
+  dailyFullFeedTime?: string;
 };
 
 export async function updateAppSettings(

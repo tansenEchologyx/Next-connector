@@ -23,6 +23,8 @@
     "worker:stock-delta": "tsx workers/stock-delta.ts",
     "worker:stock-full-feed": "tsx workers/stock-full-feed.ts",
     "worker:shipping-status": "tsx workers/shipping-status.ts",
+    "simulate:kornitx-orders": "tsx scripts/simulate-kornitx-orders.ts",
+    "post:kornitx-orders-webhook": "tsx scripts/post-kornitx-orders-webhook.ts",
     "lint": "eslint --ignore-path .gitignore --cache --cache-location ./node_modules/.cache/eslint .",
     "shopify": "shopify",
     "prisma": "prisma",

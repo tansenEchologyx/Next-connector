@@ -1,0 +1,61 @@
+.filterForm {
+  width: 100%;
+}
+
+.filterRow {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 12px;
+  width: 100%;
+}
+
+.filterSearch {
+  flex: 1 1 220px;
+  min-width: 140px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.searchLabel {
+  font-size: 13px;
+  font-weight: 450;
+  color: var(--p-color-text, #303030);
+}
+
+.searchInput {
+  width: 100%;
+  box-sizing: border-box;
+  min-height: 32px;
+  padding: 6px 12px;
+  border: 1px solid var(--p-color-border, #8a8a8a);
+  border-radius: 8px;
+  background: var(--p-color-bg-surface, #fff);
+  color: var(--p-color-text, #303030);
+  font: inherit;
+  font-size: 13px;
+}
+
+.searchInput:focus {
+  outline: 2px solid var(--p-color-border-focus, #005bd3);
+  outline-offset: 1px;
+}
+
+.filterField {
+  flex: 1 1 160px;
+  min-width: 140px;
+}
+
+.filterClear {
+  flex: 1 0 auto;
+  align-self: flex-end;
+  margin-bottom: 2px;
+}
+
+@media (max-width: 900px) {
+  .filterField {
+    flex: 1 1 calc(50% - 12px);
+    min-width: 140px;
+  }
+}

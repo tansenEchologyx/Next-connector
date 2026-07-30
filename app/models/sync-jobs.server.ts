@@ -4,11 +4,16 @@ import prisma from "../db.server";
 import { computeFulfillmentRunAfter } from "../../shared/fulfillment-sync";
 import { computeInventoryRunAfter } from "../../shared/inventory-sync";
 import {
+  formatUkCalendarDate,
+  isDailyFullFeedDue,
+} from "../../shared/uk-time";
+import {
   SYNC_JOB_STATUSES,
   SYNC_JOB_TYPES,
   type ProcessOrderJobPayload,
   type SendFulfillmentJobPayload,
   type SendInventoryDeltaJobPayload,
+  type SendInventoryFullFeedJobPayload,
 } from "../../shared/sync-job-types";
 import { getDefaultMaxAttempts } from "../../shared/retry";
 
@@ -22,6 +27,10 @@ function sendFulfillmentKey(kornitxId: string): string {
 
 function sendInventoryDeltaKey(shop: string): string {
   return `${SYNC_JOB_TYPES.SEND_INVENTORY_DELTA}:${shop}`;
+}
+
+function sendInventoryFullFeedKey(shop: string, ukDate: string): string {
+  return `${SYNC_JOB_TYPES.SEND_INVENTORY_FULL_FEED}:${shop}:${ukDate}`;
 }
 
 export async function enqueueProcessOrderJob(
@@ -63,6 +72,7 @@ export async function enqueueSendFulfillmentJobIfNeeded(
   kornitxOrderId: number,
   kornitxId: string,
   orderReceivedAt: Date,
+  options?: { forceReset?: boolean },
 ) {
   const key = sendFulfillmentKey(kornitxId);
   const existing = await prisma.syncJob.findUnique({
@@ -70,6 +80,7 @@ export async function enqueueSendFulfillmentJobIfNeeded(
   });
 
   if (
+    !options?.forceReset &&
     existing &&
     (existing.status === SYNC_JOB_STATUSES.PENDING ||
       existing.status === SYNC_JOB_STATUSES.PROCESSING)
@@ -160,4 +171,82 @@ export async function enqueueSendInventoryDeltaJobIfNeeded(shop: string) {
       completedAt: null,
     },
   });
+}
+
+export async function enqueueSendInventoryFullFeedJob(
+  shop: string,
+  ukDate: string,
+) {
+  const key = sendInventoryFullFeedKey(shop, ukDate);
+  const existing = await prisma.syncJob.findUnique({
+    where: { idempotencyKey: key },
+  });
+
+  if (
+    existing &&
+    (existing.status === SYNC_JOB_STATUSES.PENDING ||
+      existing.status === SYNC_JOB_STATUSES.PROCESSING)
+  ) {
+    return existing;
+  }
+
+  const now = new Date();
+  const existingPayload =
+    existing?.payload &&
+    typeof existing.payload === "object" &&
+    !Array.isArray(existing.payload)
+      ? (existing.payload as SendInventoryFullFeedJobPayload)
+      : {};
+  const payload: SendInventoryFullFeedJobPayload =
+    Array.isArray(existingPayload.remainingEans) &&
+    existingPayload.remainingEans.length > 0
+      ? { remainingEans: existingPayload.remainingEans }
+      : {};
+
+  if (!existing) {
+    return prisma.syncJob.create({
+      data: {
+        shop,
+        jobType: SYNC_JOB_TYPES.SEND_INVENTORY_FULL_FEED,
+        idempotencyKey: key,
+        payload: payload as Prisma.InputJsonValue,
+        status: SYNC_JOB_STATUSES.PENDING,
+        runAfter: now,
+        nextRunAt: now,
+        maxAttempts: getDefaultMaxAttempts(),
+      },
+    });
+  }
+
+  return prisma.syncJob.update({
+    where: { id: existing.id },
+    data: {
+      status: SYNC_JOB_STATUSES.PENDING,
+      payload: payload as Prisma.InputJsonValue,
+      runAfter: now,
+      nextRunAt: now,
+      attemptCount: 0,
+      lastError: null,
+      lockedAt: null,
+      completedAt: null,
+    },
+  });
+}
+
+/** Enqueue one full-feed SyncJob per shop that is due for today's UK schedule. */
+export async function enqueueDailyFullFeedJobsIfDue(now = new Date()) {
+  const settingsRows = await prisma.appSettings.findMany({
+    where: { dailyFullFeedEnabled: true },
+  });
+
+  let enqueued = 0;
+  const ukDate = formatUkCalendarDate(now);
+
+  for (const settings of settingsRows) {
+    if (!isDailyFullFeedDue(settings, now)) continue;
+    await enqueueSendInventoryFullFeedJob(settings.shop, ukDate);
+    enqueued += 1;
+  }
+
+  return enqueued;
 }
