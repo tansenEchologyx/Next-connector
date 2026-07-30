@@ -6,6 +6,7 @@ import { getOrCreateAppSettings } from "../models/app-settings.server";
 import { countUnsentInventoryDeltas } from "../models/inventory-delta.server";
 import { getOrderStatusCounts } from "../models/kornitx-orders.server";
 import prisma from "../db.server";
+import { formatUkDateTime } from "../../shared/uk-time";
 import { authenticate } from "../shopify.server";
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {
@@ -135,12 +136,10 @@ export default function DashboardPage() {
                     <s-badge tone={jobTone(job.status)}>{job.status}</s-badge>
                   </s-table-cell>
                   <s-table-cell>
-                    {new Date(job.startedAt).toLocaleString()}
+                    {formatUkDateTime(job.startedAt)}
                   </s-table-cell>
                   <s-table-cell>
-                    {job.finishedAt
-                      ? new Date(job.finishedAt).toLocaleString()
-                      : "—"}
+                    {job.finishedAt ? formatUkDateTime(job.finishedAt) : "—"}
                   </s-table-cell>
                 </s-table-row>
               ))}

@@ -1,59 +1,22 @@
 import { loadEnv } from "./lib/load-env";
-import { disconnectPrisma, prisma } from "./lib/prisma";
+import { disconnectPrisma } from "./lib/prisma";
 import { completeJobRun, failJobRun, startJobRun } from "./lib/job-run";
-
-const MAX_EANS_PER_BATCH = 100;
+import { enqueueDailyFullFeedJobsIfDue } from "../app/models/sync-jobs.server";
 
 loadEnv();
 
+/**
+ * One-shot helper: enqueue due daily full-feed SyncJobs for today (UK schedule).
+ * Actual sending is handled by `npm run worker:run-jobs`.
+ */
 async function main() {
   const jobRun = await startJobRun("stock-full-feed");
 
   try {
-    const tracked = await prisma.trackedProduct.findMany({
-      where: { enabled: true },
-      include: { inventorySyncState: true },
-    });
-
-    if (tracked.length === 0) {
-      console.log("[stock-full-feed] No tracked products enabled.");
-      await completeJobRun(jobRun.id, { sent: 0 });
-      return;
-    }
-
-    const batches = Math.ceil(tracked.length / MAX_EANS_PER_BATCH);
+    const enqueued = await enqueueDailyFullFeedJobsIfDue();
+    await completeJobRun(jobRun.id, { enqueued });
     console.log(
-      `[stock-full-feed] Would send full feed for ${tracked.length} product(s) in ${batches} batch(es). KornitX PUT pending.`,
-    );
-
-    // TODO: read live inventory from Shopify, PUT all EANs to KornitX
-    const now = new Date();
-    for (const product of tracked) {
-      const qty = product.inventorySyncState?.pendingQuantity ?? 0;
-      await prisma.inventorySyncState.upsert({
-        where: { trackedProductId: product.id },
-        create: {
-          trackedProductId: product.id,
-          pendingQuantity: qty,
-          lastSentQuantity: qty,
-          lastSentAt: now,
-          lastChangedAt: now,
-          needsSync: false,
-        },
-        update: {
-          lastSentQuantity: qty,
-          lastSentAt: now,
-          needsSync: false,
-        },
-      });
-    }
-
-    await completeJobRun(jobRun.id, {
-      products: tracked.length,
-      batches,
-    });
-    console.log(
-      `[stock-full-feed] Baseline updated for ${tracked.length} product(s).`,
+      `[stock-full-feed] Enqueued ${enqueued} daily full-feed job(s). Processing runs via worker:run-jobs.`,
     );
   } catch (err) {
     await failJobRun(jobRun.id, err);

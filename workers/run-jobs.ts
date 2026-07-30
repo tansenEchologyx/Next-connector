@@ -7,6 +7,7 @@ import {
   claimNextDueSyncJob,
   reclaimStaleSyncJobs,
 } from "./lib/sync-jobs";
+import { enqueueDailyFullFeedJobsIfDue } from "../app/models/sync-jobs.server";
 
 loadEnv();
 
@@ -29,6 +30,7 @@ function sleep(ms: number): Promise<void> {
 
 type CycleStats = {
   backfilled: number;
+  fullFeedEnqueued: number;
   reclaimed: number;
   processed: number;
   completed: number;
@@ -41,6 +43,7 @@ type CycleStats = {
 function emptyStats(): CycleStats {
   return {
     backfilled: 0,
+    fullFeedEnqueued: 0,
     reclaimed: 0,
     processed: 0,
     completed: 0,
@@ -77,6 +80,7 @@ async function runCycle(): Promise<CycleStats> {
 
   try {
     stats.backfilled = await backfillProcessOrderJobs();
+    stats.fullFeedEnqueued = await enqueueDailyFullFeedJobsIfDue();
     stats.reclaimed = await reclaimStaleSyncJobs();
 
     while (true) {
@@ -96,7 +100,7 @@ async function runCycle(): Promise<CycleStats> {
 
     await completeJobRun(jobRun.id, stats);
     console.log(
-      `[run-jobs] Cycle done. backfilled=${stats.backfilled} reclaimed=${stats.reclaimed} processed=${stats.processed} completed=${stats.completed} retryScheduled=${stats.retryScheduled} deferred=${stats.deferred} failed=${stats.failed} errors=${stats.errors}`,
+      `[run-jobs] Cycle done. backfilled=${stats.backfilled} fullFeedEnqueued=${stats.fullFeedEnqueued} reclaimed=${stats.reclaimed} processed=${stats.processed} completed=${stats.completed} retryScheduled=${stats.retryScheduled} deferred=${stats.deferred} failed=${stats.failed} errors=${stats.errors}`,
     );
     return stats;
   } catch (err) {

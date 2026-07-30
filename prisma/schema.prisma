@@ -35,18 +35,22 @@ model Session {
 // --- App configuration (per shop) ---
 
 model AppSettings {
-  id                     Int     @id @default(autoincrement())
-  shop                   String  @unique
-  kornitxRefId           String  @default("")
-  deltaIntervalMinutes   Int     @default(30)
-  inventoryLocationId    String  @default("")
-  b2bCustomerId          String  @default("")
-  defaultShippingAddress Json    @default("{}")
-  inboundAuthType        String  @default("basic")
-  preemptiveOrderPrefix  String?
-  lastInventorySyncAt    DateTime?
-  createdAt              DateTime @default(now())
-  updatedAt              DateTime @updatedAt
+  id                          Int       @id @default(autoincrement())
+  shop                        String    @unique
+  kornitxRefId                String    @default("")
+  deltaIntervalMinutes        Int       @default(30)
+  inventoryLocationId         String    @default("")
+  usePrimaryInventoryLocation Boolean   @default(false)
+  dailyFullFeedEnabled        Boolean   @default(false)
+  dailyFullFeedTime           String    @default("")
+  lastDailyFullFeedAt         DateTime?
+  b2bCustomerId               String    @default("")
+  defaultShippingAddress      Json      @default("{}")
+  inboundAuthType             String    @default("basic")
+  preemptiveOrderPrefix       String?
+  lastInventorySyncAt         DateTime?
+  createdAt                   DateTime  @default(now())
+  updatedAt                   DateTime  @updatedAt
 }
 
 // --- Inventory tracking (checkbox list in admin UI) ---
@@ -154,7 +158,7 @@ model ShippingStatusEvent {
 model SyncJob {
   id             Int       @id @default(autoincrement())
   shop           String
-  jobType        String    // process_order | send_fulfillment | send_inventory_delta
+  jobType        String    // process_order | send_fulfillment | send_inventory_delta | send_inventory_full_feed
   status         String    @default("pending") // pending | processing | completed | failed
   idempotencyKey String    @unique
   payload        Json
