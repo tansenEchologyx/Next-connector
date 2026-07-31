@@ -2,7 +2,7 @@
 
 Documentation of **features built so far** in the Next Connector Shopify app (KornitX / Next Label Plus integration).
 
-_Last updated: Inventory “Show tracked first” filter toggle._
+_Last updated: Shopify admin top loading bar on navigation and saves._
 
 ---
 
@@ -44,6 +44,8 @@ This file lists only what is **implemented today**.
   - **JobRun** — log of each worker poll cycle
 
 ### 3. Admin UI (Polaris Web Components)
+
+- Shopify admin **top loading bar** (`shopify.loading`) while React Router is navigating or submitting — covers nav between any app pages and form saves (Inventory, Settings, etc.)
 
 | Route | Purpose |
 |-------|---------|

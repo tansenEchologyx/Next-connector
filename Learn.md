@@ -2,7 +2,7 @@
 
 A beginner-friendly guide to **how the code works today**. Read this to understand files, functions, data, and flows.
 
-_Last updated: Inventory “Show tracked first” filter toggle._
+_Last updated: Shopify admin top loading bar on navigation and saves._
 
 ---
 
@@ -143,6 +143,8 @@ When a merchant opens the app, `authenticate.admin(request)` checks they are log
 ## Admin UI routes
 
 Navigation is defined in `app/routes/app.tsx` (`<s-app-nav>` links).
+
+**Loading bar:** `app/components/navigation-loading.tsx` mounts inside `AppProvider` and watches React Router’s `useNavigation()`. While `navigation.state` is not `idle` (route change, form submit/save, or GET filter navigation), it calls App Bridge `shopify.loading(true)` via `useLayoutEffect` (before paint) so the Shopify admin top progress bar shows for **every** app page change — including fast DB-only loaders like Dashboard and Orders. A short minimum visible time keeps the bar from vanishing before it can animate in; when idle (or on unmount), it calls `shopify.loading(false)`. Same path covers Inventory **Save selection** and Settings **Save**.
 
 ### `/app` — Dashboard (`app/routes/app._index.tsx`)
 
