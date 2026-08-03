@@ -41,3 +41,16 @@ export function buildFulfillmentSendRetryWarningMessage(
   const retryAt = formatRetryDateTime(nextRunAt);
   return `Fulfillment send to KornitX failed: ${errorMessage}. ${retryLabel} retry at ${retryAt}.`;
 }
+
+/** Terminal config failure — merchant must fix settings then click Retry. */
+export function buildOrderCreationConfigFailureMessage(
+  errorMessage: string,
+): string {
+  return `Order creation failed: ${errorMessage}. Fix the setting, then click Retry.`;
+}
+
+export function buildFulfillmentConfigFailureMessage(
+  errorMessage: string,
+): string {
+  return `Fulfillment status could not be sent to KornitX: ${errorMessage}. Fix the setting, then click Resend.`;
+}

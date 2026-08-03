@@ -1,22 +1,21 @@
 import type { KornitxOrder, KornitxOrderItem } from "@prisma/client";
 
-import {
-  loadAppSettings,
-  validateOrderSettings,
-} from "./app-settings";
+import { assertOrderSettings, loadAppSettings } from "./app-settings";
 import { createShopifyOrderFromKornitx } from "./create-shopify-order";
 import { markOrderCreated } from "./orders";
+import { resolveOptionalCustomerShippingAddress } from "./resolve-shipping-address";
 import { resolveWorkerShopSession } from "./shopify-session";
 
 export async function processKornitxOrder(
   order: KornitxOrder & { items: KornitxOrderItem[] },
 ) {
   const { shop, accessToken } = await resolveWorkerShopSession();
-  const settings = await loadAppSettings(shop);
-  const settingsError = validateOrderSettings(settings);
-  if (settingsError || !settings) {
-    throw new Error(settingsError ?? "App settings missing");
-  }
+  const settings = assertOrderSettings(await loadAppSettings(shop));
+  const shippingAddress = await resolveOptionalCustomerShippingAddress(
+    shop,
+    accessToken,
+    settings,
+  );
 
   const result = await createShopifyOrderFromKornitx(
     shop,
@@ -24,6 +23,7 @@ export async function processKornitxOrder(
     settings,
     order,
     order.items,
+    shippingAddress,
   );
 
   await markOrderCreated(

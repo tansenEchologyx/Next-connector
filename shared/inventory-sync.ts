@@ -1,34 +1,34 @@
 import type { AppSettings } from "@prisma/client";
 
-/** 30 minutes — used when INVENTORY_SYNC_INTERVAL_SECONDS is unset or invalid. */
-export const DEFAULT_INVENTORY_SYNC_INTERVAL_SECONDS = 30 * 60;
+/** Default delta cadence in minutes when settings value is missing/invalid. */
+export const DEFAULT_INVENTORY_DELTA_INTERVAL_MINUTES = 30;
 
-export function getInventorySyncIntervalSeconds(): number {
-  const raw = process.env.INVENTORY_SYNC_INTERVAL_SECONDS?.trim();
-  if (!raw) {
-    return DEFAULT_INVENTORY_SYNC_INTERVAL_SECONDS;
+export function getInventoryDeltaIntervalMinutes(
+  settings: Pick<AppSettings, "deltaIntervalMinutes"> | null,
+): number {
+  const minutes = settings?.deltaIntervalMinutes;
+  if (
+    typeof minutes !== "number" ||
+    !Number.isFinite(minutes) ||
+    minutes < 1 ||
+    !Number.isInteger(minutes)
+  ) {
+    return DEFAULT_INVENTORY_DELTA_INTERVAL_MINUTES;
   }
-
-  const seconds = Number(raw);
-  if (!Number.isFinite(seconds) || seconds < 0) {
-    console.warn(
-      `[inventory-sync] Invalid INVENTORY_SYNC_INTERVAL_SECONDS="${raw}"; using ${DEFAULT_INVENTORY_SYNC_INTERVAL_SECONDS}s`,
-    );
-    return DEFAULT_INVENTORY_SYNC_INTERVAL_SECONDS;
-  }
-
-  return seconds;
+  return minutes;
 }
 
-export function getInventorySyncIntervalMs(): number {
-  return getInventorySyncIntervalSeconds() * 1000;
+export function getInventorySyncIntervalMs(
+  settings: Pick<AppSettings, "deltaIntervalMinutes"> | null,
+): number {
+  return getInventoryDeltaIntervalMinutes(settings) * 60 * 1000;
 }
 
 export function computeInventoryRunAfter(
   settings: AppSettings | null,
   now = Date.now(),
 ): Date {
-  const intervalMs = getInventorySyncIntervalMs();
+  const intervalMs = getInventorySyncIntervalMs(settings);
   const lastSync = settings?.lastInventorySyncAt;
 
   if (!lastSync) {

@@ -40,6 +40,7 @@ export async function markOrderCreated(
         status: "created",
         shopifyOrderId,
         shopifyOrderName,
+        shopifyFulfillmentStatus: "unfulfilled",
         failureReason: null,
       },
     });

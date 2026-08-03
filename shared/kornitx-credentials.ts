@@ -1,5 +1,10 @@
 import type { AppSettings } from "@prisma/client";
 
+import {
+  CONFIG_ERROR_CODES,
+  configurationError,
+} from "./configuration-error";
+
 export type KornitxApiCredentials = {
   refId: string;
   apiKey: string;
@@ -13,12 +18,10 @@ export function loadKornitxApiCredentials(
   const apiKey = process.env.KORNITX_API_KEY?.trim();
 
   if (!refId) {
-    throw new Error(
-      "KornitX Ref ID is not configured (Settings or KORNITX_REF_ID)",
-    );
+    throw configurationError(CONFIG_ERROR_CODES.KORNITX_REF_ID);
   }
   if (!apiKey) {
-    throw new Error("KornitX API key is not configured (KORNITX_API_KEY)");
+    throw configurationError(CONFIG_ERROR_CODES.KORNITX_API_KEY);
   }
 
   return { refId, apiKey };
