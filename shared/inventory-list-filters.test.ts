@@ -3,8 +3,10 @@ import { describe, it } from "node:test";
 
 import type { InventoryVariantForFilter } from "./inventory-list-filters";
 import {
+  areAllInventoryVariantsSelected,
   paginateInventoryVariants,
   parseInventoryListFilters,
+  selectAllInventoryVariantIds,
   sortInventoryVariantsWithTrackedFirst,
 } from "./inventory-list-filters";
 
@@ -153,5 +155,68 @@ describe("paginateInventoryVariants", () => {
     assert.equal(result.page, 1);
     assert.equal(result.totalPages, 1);
     assert.equal(result.totalCount, 0);
+  });
+});
+
+describe("selectAllInventoryVariantIds", () => {
+  it("returns a Set of every variantId", () => {
+    const variants = [
+      variant({
+        variantId: "v1",
+        productTitle: "A",
+        variantTitle: "1",
+      }),
+      variant({
+        variantId: "v2",
+        productTitle: "B",
+        variantTitle: "2",
+      }),
+    ];
+
+    assert.deepEqual(
+      [...selectAllInventoryVariantIds(variants)].sort(),
+      ["v1", "v2"],
+    );
+  });
+
+  it("returns an empty Set for an empty catalog", () => {
+    assert.equal(selectAllInventoryVariantIds([]).size, 0);
+  });
+});
+
+describe("areAllInventoryVariantsSelected", () => {
+  const variants = [
+    variant({
+      variantId: "v1",
+      productTitle: "A",
+      variantTitle: "1",
+    }),
+    variant({
+      variantId: "v2",
+      productTitle: "B",
+      variantTitle: "2",
+    }),
+  ];
+
+  it("returns true when every catalog variant is selected", () => {
+    assert.equal(
+      areAllInventoryVariantsSelected(new Set(["v1", "v2"]), variants),
+      true,
+    );
+  });
+
+  it("returns false for partial selection (binary header — no indeterminate)", () => {
+    assert.equal(
+      areAllInventoryVariantsSelected(new Set(["v1"]), variants),
+      false,
+    );
+  });
+
+  it("returns false when nothing is selected", () => {
+    assert.equal(areAllInventoryVariantsSelected(new Set(), variants), false);
+  });
+
+  it("returns false for an empty catalog", () => {
+    assert.equal(areAllInventoryVariantsSelected(new Set(["v1"]), []), false);
   });
 });

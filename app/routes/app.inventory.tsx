@@ -28,10 +28,12 @@ import {
 import { fetchLocations } from "../services/shopify-admin.server";
 import { resolveEffectiveInventoryLocation } from "../../shared/inventory-location";
 import {
+  areAllInventoryVariantsSelected,
   filterInventoryVariants,
   hasActiveInventoryFilters,
   paginateInventoryVariants,
   parseInventoryListFilters,
+  selectAllInventoryVariantIds,
   sortInventoryVariantsWithTrackedFirst,
 } from "../../shared/inventory-list-filters";
 import { InventoryFilters } from "../components/inventory/inventory-filters";
@@ -57,6 +59,19 @@ function readPolarisValue(event: unknown): string {
   const el = e.currentTarget ?? e.target;
   if (el && typeof el.value === "string") return el.value;
   return "";
+}
+
+function readPolarisChecked(event: unknown): boolean {
+  if (!event || typeof event !== "object") return false;
+  const e = event as {
+    currentTarget?: { checked?: boolean } | null;
+    target?: { checked?: boolean } | null;
+    detail?: { checked?: boolean };
+  };
+  if (e.detail?.checked != null) return Boolean(e.detail.checked);
+  const el = e.currentTarget ?? e.target;
+  if (el && typeof el.checked === "boolean") return el.checked;
+  return false;
 }
 
 async function loadInventoryForShop(
@@ -164,6 +179,9 @@ export function shouldRevalidate({
     params.delete("page");
     params.delete("pageSize");
     params.delete("trackedFirst");
+    params.delete("q");
+    params.delete("availability");
+    params.delete("tracking");
     return params.toString();
   };
 
@@ -189,11 +207,10 @@ export default function InventoryPage() {
   const isSaving = navigation.state === "submitting";
   const isLoading = navigation.state === "loading";
 
-  const initialSelected = useMemo(
+  // Draft selection: init once from DB; preserve across search/filter/pagination.
+  const [selected, setSelected] = useState(
     () => new Set(trackedVariantIds),
-    [trackedVariantIds],
   );
-  const [selected, setSelected] = useState(initialSelected);
   const filters = useMemo(
     () => parseInventoryListFilters(searchParams),
     [searchParams],
@@ -204,10 +221,12 @@ export default function InventoryPage() {
     setSearchQuery(filters.q);
   }, [filters.q]);
 
-  // Keep draft checkboxes in sync after Save (loader returns updated IDs).
+  // Sync draft checkboxes from DB only after a successful Save.
   useEffect(() => {
-    setSelected(new Set(trackedVariantIds));
-  }, [trackedVariantIds]);
+    if (actionData?.ok) {
+      setSelected(new Set(trackedVariantIds));
+    }
+  }, [actionData?.ok, trackedVariantIds]);
 
   const activeFilters = useMemo(
     () => ({ ...filters, q: searchQuery }),
@@ -217,6 +236,11 @@ export default function InventoryPage() {
   const savedTrackedIds = useMemo(
     () => new Set(trackedVariantIds),
     [trackedVariantIds],
+  );
+
+  const allSelected = useMemo(
+    () => areAllInventoryVariantsSelected(selected, variants),
+    [selected, variants],
   );
 
   const sortedVariants = useMemo(() => {
@@ -269,6 +293,14 @@ export default function InventoryPage() {
       }
       return next;
     });
+  };
+
+  const handleHeaderSelectAllChange = (checked: boolean) => {
+    if (checked) {
+      setSelected(selectAllInventoryVariantIds(variants));
+    } else {
+      setSelected(new Set());
+    }
   };
 
   const goToPage = (nextPage: number) => {
@@ -386,7 +418,19 @@ export default function InventoryPage() {
               <div className={styles.tableWrap}>
                 <s-table variant="auto" loading={isLoading}>
                   <s-table-header-row>
-                    <s-table-header listSlot="primary">Track</s-table-header>
+                    <s-table-header listSlot="primary">
+                      <span className={styles.trackHeader}>
+                        <s-checkbox
+                          checked={allSelected}
+                          onChange={(event) =>
+                            handleHeaderSelectAllChange(
+                              readPolarisChecked(event),
+                            )
+                          }
+                          label="Track"
+                        />
+                      </span>
+                    </s-table-header>
                     <s-table-header>Product</s-table-header>
                     <s-table-header>Variant</s-table-header>
                     <s-table-header>SKU</s-table-header>

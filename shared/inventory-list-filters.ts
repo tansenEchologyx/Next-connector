@@ -138,3 +138,21 @@ export function paginateInventoryVariants<T>(
     totalPages,
   };
 }
+
+/** All variant IDs in the catalog (for select-all draft selection). */
+export function selectAllInventoryVariantIds<
+  T extends { variantId: string },
+>(variants: T[]): Set<string> {
+  return new Set(variants.map((variant) => variant.variantId));
+}
+
+/**
+ * True only when every catalog variant is selected.
+ * Partial selection returns false (binary header checkbox — no indeterminate).
+ */
+export function areAllInventoryVariantsSelected<
+  T extends { variantId: string },
+>(selected: ReadonlySet<string>, variants: T[]): boolean {
+  if (variants.length === 0) return false;
+  return variants.every((variant) => selected.has(variant.variantId));
+}

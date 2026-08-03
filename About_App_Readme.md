@@ -51,7 +51,7 @@ This file lists only what is **implemented today**.
 |-------|---------|
 | `/app` | Dashboard — order counts, unsent inventory deltas, recent worker runs, setup warnings |
 | `/app/settings` | Full-width page — KornitX Ref ID, B2B customer, **Next Label Plus orders** (pre-emptive prefix + require toggle), **Inventory sync** (delta interval minutes, location, use-primary toggle, daily full-feed enable + UK time), inbound webhook URL |
-| `/app/inventory` | Full-width paginated product table with checkboxes — **all shop barcoded variants**; qty/availability at configured location; search + availability + tracking filters; page size 10/25/50; optional **Show tracked first** (default off; reorder after Save when on) |
+| `/app/inventory` | Full-width paginated product table with checkboxes — **all shop barcoded variants**; qty/availability at configured location; search + availability + tracking filters; page size 10/25/50; optional **Show tracked first** (default off; reorder after Save when on); **header checkbox** selects/deselects the full catalog; draft selection persists across search/filter/pagination until Save or leaving the page |
 | `/app/orders` | Full-width paginated KornitX order list — times in **UK timezone**; search/filters (including Shopify fulfillment status), issues, **Retry** on any order-creation failure (auto-retry pending or exhausted), fulfillment Resend |
 
 ### 4. Webhooks

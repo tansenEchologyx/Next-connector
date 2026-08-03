@@ -327,15 +327,17 @@ If no location is configured, the page shows a banner and an empty table.
 2. `fetchProductVariantsWithInventory(admin, locationId)` — variants with barcodes and available qty at that location
 3. `getTrackedVariantIds(shop)` — which variant IDs are currently enabled
 
-The loader still fetches **all** barcoded variants from Shopify on enter/reload (and when non-page filters change). Pagination is **client-side** over that cached list.
+The loader still fetches **all** barcoded variants from Shopify on enter/reload (and after Save). Pagination, search, and list filters are **client-side** over that cached list — `shouldRevalidate` skips the Shopify re-fetch when only `q`, `availability`, `tracking`, `page`, `pageSize`, or `trackedFirst` change.
 
 **Sort order:** Filter toggle **Show tracked first** (URL `trackedFirst`, default off). When on (`trackedFirst=1`), `sortInventoryVariantsWithTrackedFirst()` puts **saved** tracked variants (from `trackedVariantIds` in the loader / DB) at the top, then sorts by product title + variant title. When off, the list keeps the original Shopify loader order. Checking or unchecking Track does **not** move rows immediately — with the toggle on, the list only reorders after **Save selection**. Draft checkbox state still drives the tracking filter.
 
-**UI columns:** Track checkbox, Product, Variant, SKU, EAN, **Qty**, **Availability** (Available / Unavailable).
+**UI columns:** Track (header checkbox + per-row checkboxes), Product, Variant, SKU, EAN, **Qty**, **Availability** (Available / Unavailable).
+
+**Draft selection:** Checkboxes use local React state (`selected` Set of variant IDs), initialized from DB on mount. Searching, filtering, and paging **do not** clear unsaved toggles. The header checkbox beside **Track** is binary: checked only when every catalog variant is selected; check → select all barcoded variants in the shop; uncheck → clear all draft selections. Partial selection shows the header as unchecked (no indeterminate). After **Save selection**, draft syncs from the new `trackedVariantIds`. Navigating away from `/app/inventory` or reloading the browser remounts from DB.
 
 **Filters (URL params):** `q`, `availability`, `tracking`, `trackedFirst` (`1` when on; omitted when off), `page`, `pageSize` (10 / 25 / 50; default 10). Search is debounced as you type and filters immediately client-side. Availability and tracking dropdowns update the URL. Changing any filter resets `page` to 1. Tracking filter matches the **current checkbox selection** (draft), not only saved DB state.
 
-**Pagination:** After sort + filters, `paginateInventoryVariants()` slices the list for the current page. Footer shows variants-per-page select + Previous/Next (same UX as Orders). `shouldRevalidate` skips the Shopify re-fetch when only `page` / `pageSize` / `trackedFirst` change, so paging and the sort toggle stay fast.
+**Pagination:** After sort + filters, `paginateInventoryVariants()` slices the list for the current page. Footer shows variants-per-page select + Previous/Next (same UX as Orders).
 
 **List scope:** all barcoded variants in the shop. Qty and availability reflect the configured location only.
 
@@ -349,8 +351,10 @@ The loader still fetches **all** barcoded variants from Shopify on enter/reload 
 
 - `app/models/tracked-products.server.ts`
 - `app/services/shopify-inventory.server.ts` — GraphQL inventory at a location
-- `shared/inventory-list-filters.ts` — parse filters, sort tracked-first, filter rows, paginate
+- `shared/inventory-list-filters.ts` — parse filters, sort tracked-first, filter rows, paginate, select-all helpers
 - `app/components/inventory/inventory-filters.tsx` — filter bar UI
+
+**Future (not built yet):** Parent/variant accordion — group by `productId`, parent row with checkbox that selects all child variants, accordion open by default with indented variant rows. When search/filters are active, keep a flat list (hierarchy is awkward when only one variant matches).
 
 ---
 
