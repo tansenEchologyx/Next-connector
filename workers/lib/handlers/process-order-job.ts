@@ -5,7 +5,11 @@ import {
   ISSUE_TYPES,
   upsertOpenOrderIssue,
 } from "../../../app/models/kornitx-order-issues.server";
-import { buildOrderCreationRetryWarningMessage } from "../../../shared/order-processing-issues";
+import { isConfigurationError } from "../../../shared/configuration-error";
+import {
+  buildOrderCreationConfigFailureMessage,
+  buildOrderCreationRetryWarningMessage,
+} from "../../../shared/order-processing-issues";
 import type { ProcessOrderJobPayload } from "../../../shared/sync-job-types";
 import { processKornitxOrder } from "../process-kornitx-order";
 import { prisma } from "../prisma";
@@ -42,13 +46,15 @@ export async function handleProcessOrderJob(job: SyncJob) {
     await completeSyncJob(job.id);
     return { outcome: "created" as const };
   } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
     const result = await failSyncJobWithBackoff(job, error, async () => {
-      const message = error instanceof Error ? error.message : String(error);
-      await markOrderFailed(order.id, message);
+      const failureMessage = isConfigurationError(error)
+        ? buildOrderCreationConfigFailureMessage(message)
+        : message;
+      await markOrderFailed(order.id, failureMessage);
     });
 
     if (!result.terminal) {
-      const message = error instanceof Error ? error.message : String(error);
       await markOrderReceivedForRetry(order.id, message);
 
       await upsertOpenOrderIssue(

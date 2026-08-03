@@ -2,7 +2,7 @@
 
 Documentation of **features built so far** in the Next Connector Shopify app (KornitX / Next Label Plus integration).
 
-_Last updated: Shopify admin top loading bar on navigation and saves._
+_Last updated: Next Label Plus order settings (shipping address, pre-emptive prefix) and permanent config-failure rules._
 
 ---
 
@@ -33,7 +33,7 @@ This file lists only what is **implemented today**.
 - Local PostgreSQL via Docker Compose (port 5433)
 - Models:
   - **Session** — Shopify OAuth sessions
-  - **AppSettings** — per-shop settings including inventory location, primary-location toggle, daily full-feed schedule (UK time), `lastDailyFullFeedAt`, and `lastInventorySyncAt` (delta interval is env-only)
+  - **AppSettings** — per-shop settings including inventory location, primary-location toggle, **inventory delta interval minutes**, daily full-feed schedule (UK time), `lastDailyFullFeedAt`, `lastInventorySyncAt`, `preemptiveOrderPrefix`, and `requirePreemptivePrefix`
   - **TrackedProduct** — products selected for inventory sync
   - **InventorySyncState** — legacy per-product sync state (from inventory UI)
   - **InventoryDelta** — unsent inventory changes per EAN (from inventory webhook)
@@ -50,7 +50,7 @@ This file lists only what is **implemented today**.
 | Route | Purpose |
 |-------|---------|
 | `/app` | Dashboard — order counts, unsent inventory deltas, recent worker runs, setup warnings |
-| `/app/settings` | Full-width page — KornitX Ref ID, B2B customer, **Inventory sync** (location, use-primary toggle, daily full-feed enable + UK time), inbound webhook URL |
+| `/app/settings` | Full-width page — KornitX Ref ID, B2B customer, **Next Label Plus orders** (pre-emptive prefix + require toggle), **Inventory sync** (delta interval minutes, location, use-primary toggle, daily full-feed enable + UK time), inbound webhook URL |
 | `/app/inventory` | Full-width paginated product table with checkboxes — **all shop barcoded variants**; qty/availability at configured location; search + availability + tracking filters; page size 10/25/50; optional **Show tracked first** (default off; reorder after Save when on) |
 | `/app/orders` | Full-width paginated KornitX order list — times in **UK timezone**; search/filters, issues, fulfillment actions |
 
@@ -78,17 +78,17 @@ KornitX inbound auth is configured in `.env` (`KORNITX_WEBHOOK_BASIC_*` or `KORN
 5. Job types (in order):
    - **`process_order`** — Shopify `orderCreate`
    - **`send_fulfillment`** — KornitX shipping status PUT (batched orders: one API call with all unsent line items)
-   - **`send_inventory_delta`** — KornitX stock PUT for unsent `InventoryDelta` rows in batches of 100 (respects `INVENTORY_SYNC_INTERVAL_SECONDS` since `lastInventorySyncAt`). Each successful batch is marked `sent` immediately (optimistic `quantity` + `updatedAt` check). On partial batch failure, earlier batches stay marked sent, `lastInventorySyncAt` advances, and leftovers retry at the next interval — not exponential backoff. Qty **0** is sent when stock drops to zero.
+   - **`send_inventory_delta`** — KornitX stock PUT for unsent `InventoryDelta` rows in batches of 100 (respects **Settings → Inventory delta interval** minutes since `lastInventorySyncAt`). Each successful batch is marked `sent` immediately (optimistic `quantity` + `updatedAt` check). On partial batch failure, earlier batches stay marked sent, `lastInventorySyncAt` advances, and leftovers retry at the next interval — not exponential backoff. Qty **0** is sent when stock drops to zero.
    - **`send_inventory_full_feed`** — once per UK day (when enabled): GraphQL-fetch live qty for **all** enabled `TrackedProduct` rows at the effective location, PUT to KornitX in batches of 100. Every tracked EAN is included; out-of-stock items send **`quantity_available: 0`** (never omitted). Failures use exponential backoff; partial batch failure stores remaining EANs in the job payload for retry.
 6. Marks each job **`processing`** while in flight (safe for multiple worker instances later)
-7. Retryable errors use exponential backoff on the SyncJob (`nextRunAt`, up to 8 attempts)
+7. Retryable errors use exponential backoff on the SyncJob (`nextRunAt`, up to 8 attempts). **Configuration errors** (missing B2B customer, shipping address, required prefix, inventory location, Ref ID, API key) fail **immediately** with no backoff — order/fulfillment need a manual Retry/Resend; inventory jobs self-heal on the next cycle after settings are fixed
 8. Writes a **JobRun** summary per cycle
 
-**Before order processing:** B2B customer in `/app/settings`. KornitX **EAN = Shopify variant barcode**.
+**Before order processing:** B2B customer in `/app/settings`. Optional: pre-emptive prefix (required only when “Require prefix” is on). KornitX **EAN = Shopify variant barcode**. Created Shopify orders use name `NXT-{kornitxId}` and tags `NXTLabel`, `NXT-`, plus `next-live` / `next-preemptive` from the prefix (for Torque filtering vs web orders). If the B2B customer has a default Shopify address it is attached; otherwise the order is created without a shipping address.
 
-**Before outbound KornitX calls:** KornitX Ref ID in Settings + `KORNITX_API_KEY` in `.env`.
+**Before outbound KornitX calls:** KornitX Ref ID in Settings + `KORNITX_API_KEY` in `.env`. Inventory delta/full feed also need a configured inventory location (selected or Use primary).
 
-Optional `.env`: `WORKER_SHOP`, `WORKER_POLL_INTERVAL_MS`, `INVENTORY_SYNC_INTERVAL_SECONDS` (default `1800`), `FULFILLMENT_DELAY_SECONDS` (default `1200` = 20 min), `KORNITX_STOCK_URL`, `KORNITX_SHIPPING_URL`, `KORNITX_ORDER_STATUS_BASE_URL`.
+Optional `.env`: `WORKER_SHOP`, `WORKER_POLL_INTERVAL_MS`, `FULFILLMENT_DELAY_SECONDS` (default `1200` = 20 min), `KORNITX_STOCK_URL`, `KORNITX_SHIPPING_URL`, `KORNITX_ORDER_STATUS_BASE_URL`. Inventory delta interval is set in **Settings** (`deltaIntervalMinutes`, default 30).
 
 **Local mock (Beeceptor):** set `KORNITX_STOCK_URL` and `KORNITX_SHIPPING_URL` in `.env`. **Production:** use real stock URL, clear `KORNITX_SHIPPING_URL`, set `KORNITX_ORDER_STATUS_BASE_URL`.
 

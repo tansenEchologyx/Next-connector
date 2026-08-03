@@ -57,7 +57,7 @@ next-connector/
 ├── shared/                 ← Job types + retry backoff helpers
 │   ├── sync-job-types.ts
 │   ├── retry.ts
-│   ├── inventory-sync.ts   ← INVENTORY_SYNC_INTERVAL_SECONDS
+│   ├── inventory-sync.ts   ← Settings deltaIntervalMinutes
 │   ├── inventory-location.ts ← effective inventory location (selected vs primary)
 │   ├── inventory-list-filters.ts ← inventory page search/filter helpers
 │   ├── uk-time.ts          ← Europe/London formatting + daily full-feed schedule
@@ -169,7 +169,7 @@ Navigation is defined in `app/routes/app.tsx` (`<s-app-nav>` links).
 1. `getOrCreateAppSettings(session.shop)` — ensures one `AppSettings` row per shop
 2. `fetchLocations(admin)` and `fetchCustomers(admin)` — dropdown options from Shopify
 
-**Action:** Saves `kornitxRefId`, `b2bCustomerId`, `inventoryLocationId`, `usePrimaryInventoryLocation`, `dailyFullFeedEnabled`, and `dailyFullFeedTime`.
+**Action:** Saves `kornitxRefId`, `b2bCustomerId`, `inventoryLocationId`, `usePrimaryInventoryLocation`, `dailyFullFeedEnabled`, `dailyFullFeedTime`, `deltaIntervalMinutes`, `preemptiveOrderPrefix`, and `requirePreemptivePrefix`.
 
 **Fields on the page:**
 
@@ -177,17 +177,22 @@ Navigation is defined in `app/routes/app.tsx` (`<s-app-nav>` links).
 |-------|-----------------|-------------|
 | KornitX Ref ID | `kornitxRefId` | **Yes** — outbound KornitX stock/shipping API |
 | B2B customer | `b2bCustomerId` | **Yes** — `run-jobs` → Shopify `orderCreate` |
+| Pre-emptive order prefix | `preemptiveOrderPrefix` | **Yes** — classifies `OrderExternalRef`; tags `next-live` / `next-preemptive` |
+| Require prefix | `requirePreemptivePrefix` | **Yes** — when on, missing prefix permanently fails order creation |
+| Inventory delta interval (minutes) | `deltaIntervalMinutes` | **Yes** — cadence for sending unsent stock deltas to KornitX (default 30) |
 | Inventory location | `inventoryLocationId` | **Yes** — Inventory page qty + daily full feed (ignored when primary toggle is on) |
 | Use primary location | `usePrimaryInventoryLocation` | **Yes** — use Shopify primary location instead of the dropdown |
 | Enable daily full feed | `dailyFullFeedEnabled` | **Yes** — master toggle for once-per-day full feed |
 | Daily full feed time (UK) | `dailyFullFeedTime` | **Yes** — native time input (`type="time"`); type or pick HH:mm in Europe/London; required when enabled |
 | Last full feed | `lastDailyFullFeedAt` | Read-only — shown in UK time |
 
-**Inventory sync section:** choose a location **or** enable **Use primary location** (default off). Selecting a location automatically turns off the primary toggle. Optionally enable **daily full inventory feed** and set a UK time (no default) — validation requires time + a resolvable location when the feed is on.
+**Next Label Plus orders section:** optional 2-letter pre-emptive prefix + “Require prefix” checkbox (default off). Missing B2B customer / required prefix fails order creation immediately (ERROR issue, no auto-retry); merchant clicks **Retry** after fixing. Shipping address is **not** configured here — if the B2B customer has a Shopify default address it is used on `orderCreate`; otherwise the order is created without one.
+
+**Inventory sync section:** set **Inventory delta interval** in minutes (default 30; used instead of any `.env` cadence). Choose a location **or** enable **Use primary location** (default off). Selecting a location automatically turns off the primary toggle. Optionally enable **daily full inventory feed** and set a UK time (no default) — validation requires time + a resolvable location when the feed is on. Inventory delta permanently fails (no backoff) when location is unset (and Use primary off) or Ref ID / API key is missing; full feed also does not run when disabled or no time is set.
 
 **Inbound webhook section:** shows the full KornitX webhook URL built from `SHOPIFY_APP_URL`. Auth is configured in **`.env`** only. Inventory delta and daily full feed run via **`npm run worker:run-jobs`**.
 
-**Helper files:** `app/models/app-settings.server.ts`, `shared/uk-time.ts`
+**Helper files:** `app/models/app-settings.server.ts`, `shared/uk-time.ts`, `shared/configuration-error.ts`, `workers/lib/resolve-shipping-address.ts`
 
 All merchant-facing timestamps (orders received date, retry messages, dashboard worker runs, last full feed) use **`Europe/London`** via `formatUkDateTime`.
 
@@ -419,7 +424,7 @@ Webhooks enqueue rows; `run-jobs` claims and processes them.
 
 | `jobType` | Enqueued by | Handler |
 |-----------|-------------|---------|
-| `process_order` | KornitX inbound webhook, manual retry | Shopify `orderCreate` |
+| `process_order` | KornitX inbound webhook, manual retry | Shopify `orderCreate` — name `NXT-{kornitxId}`, tags `NXTLabel` + `NXT-` (Torque) |
 | `send_fulfillment` | Shopify fulfilled/cancelled webhooks (one coalesced job per KornitX order) | KornitX shipping PUT — batched orders send all unsent line items in one request |
 | `send_inventory_delta` | Inventory webhook (one coalesced job per shop) | KornitX stock PUT |
 | `send_inventory_full_feed` | `run-jobs` scheduler when UK daily time is due | KornitX stock PUT (all tracked EANs) |
@@ -456,7 +461,7 @@ Webhooks enqueue rows; `run-jobs` claims and processes them.
 2. `reclaimStaleSyncJobs()` — reset jobs stuck in `processing` > 15 min
 3. Loop: `claimNextDueSyncJob()` → `dispatchSyncJob()` until no due jobs
 4. Priority: `process_order` → `send_fulfillment` → `send_inventory_delta` → `send_inventory_full_feed`
-5. **`send_inventory_delta`:** skips until `lastInventorySyncAt + INVENTORY_SYNC_INTERVAL_SECONDS`; PUTs unsent `InventoryDelta` rows in batches of 100. After each successful batch, rows in that batch are marked `sent` only if snapshot `quantity` and `updatedAt` still match. `lastInventorySyncAt` advances when any batch succeeds. If a later batch fails, earlier batches stay marked sent and leftovers retry at the next interval (not exponential backoff). Total failure on the first batch still uses retry backoff. Qty **0** is sent when stock drops to zero.
+5. **`send_inventory_delta`:** skips until `lastInventorySyncAt + Settings.deltaIntervalMinutes`; PUTs unsent `InventoryDelta` rows in batches of 100. After each successful batch, rows in that batch are marked `sent` only if snapshot `quantity` and `updatedAt` still match. `lastInventorySyncAt` advances when any batch succeeds. If a later batch fails, earlier batches stay marked sent and leftovers retry at the next interval (not exponential backoff). Total failure on the first batch still uses retry backoff. Qty **0** is sent when stock drops to zero.
 6. **`send_inventory_full_feed`:** enqueued when Settings has daily full feed enabled and today's UK scheduled time has passed (and not yet successfully run today). Fetches live qty for every enabled `TrackedProduct` at the effective location and PUTs all EANs (including **0** for out of stock). Partial failure stores remaining EANs and retries with exponential backoff.
 6. **`send_fulfillment`:** skips until `orderReceivedAt + FULFILLMENT_DELAY_SECONDS` (default 20 min); loads all unsent `ShippingStatusEvent` rows for the order and sends one PUT (batched: `PUT /order-item/status` with full item array). On retryable failure, upserts a WARNING issue; on terminal failure, upserts an ERROR issue. Success resolves fulfillment issues.
 7. Writes `JobRun` metadata per cycle
@@ -487,7 +492,7 @@ Optional `.env`: `WORKER_POLL_INTERVAL_MS=300000` (5 min default).
 
 **Story:** Inventory changed on a tracked SKU. The **`inventory_levels/update`** webhook upserts **`InventoryDelta`** (`status = unsent`) and enqueues one coalesced **`send_inventory_delta`** SyncJob per shop (if none pending/processing).
 
-**Sending:** handled by **`run-jobs`** when `INVENTORY_SYNC_INTERVAL_SECONDS` has elapsed since `AppSettings.lastInventorySyncAt` (default **1800** = 30 min).
+**Sending:** handled by **`run-jobs`** when Settings **Inventory delta interval** (minutes) has elapsed since `AppSettings.lastInventorySyncAt` (default **30**).
 
 **Mid-run race:** the handler snapshots unsent rows, sends them in batches of 100, and marks each batch's rows `sent` only if `quantity` and `updatedAt` are unchanged. Example: snapshot has qty 10, webhook updates to 15 during the run → KornitX gets 10, row stays `unsent` with 15, corrected on the next interval run (~30 min later).
 
@@ -550,7 +555,6 @@ DATABASE_URL="postgresql://next_connector:next_connector@localhost:5433/next_con
 | `KORNITX_WEBHOOK_BASIC_PASSWORD` | Inbound webhook | Basic auth password for KornitX POST |
 | `KORNITX_WEBHOOK_OAUTH_TOKEN` | Inbound webhook | Bearer token (alternative to Basic) |
 | `WORKER_SHOP` | Workers | Optional shop domain if multiple stores (defaults to AppSettings shop) |
-| `INVENTORY_SYNC_INTERVAL_SECONDS` | Workers | Seconds between inventory delta sends to KornitX (default `1800` = 30 min; use `30` for testing) |
 | `FULFILLMENT_DELAY_SECONDS` | Workers | Seconds after KornitX order received before shipping status is sent (default `1200` = 20 min; use `30` for testing) |
 | `WORKER_POLL_INTERVAL_MS` | Workers | Poll interval for `run-jobs` (default 300000) |
 | `KORNITX_REF_ID` | Workers | KornitX account code (or `mock-ref` for Beeceptor) |

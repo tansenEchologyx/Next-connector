@@ -494,10 +494,9 @@ export default function InventoryPage() {
                 </s-list-item>
                 <s-list-item>
                   The unified <s-text type="strong">run-jobs</s-text> worker
-                  sends unsent deltas to KornitX when{" "}
-                  <s-text type="strong">INVENTORY_SYNC_INTERVAL_SECONDS</s-text>{" "}
-                  has elapsed since the last successful sync (default 1800 = 30
-                  minutes).
+                  sends unsent deltas to KornitX using the{" "}
+                  <s-text type="strong">Inventory delta interval</s-text> set in
+                  Settings (default 30 minutes).
                 </s-list-item>
               </s-unordered-list>
             </s-stack>
