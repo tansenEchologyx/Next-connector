@@ -33,20 +33,37 @@ function sendInventoryFullFeedKey(shop: string, ukDate: string): string {
   return `${SYNC_JOB_TYPES.SEND_INVENTORY_FULL_FEED}:${shop}:${ukDate}`;
 }
 
+/**
+ * Ensure exactly one process_order SyncJob exists per KornitX order id.
+ * Uses unique idempotencyKey `process_order:{kornitxId}` — never inserts a
+ * second row when auto-retry is already scheduled or manual Retry is clicked.
+ *
+ * If the job is currently PROCESSING, leave it alone (do not demote to
+ * PENDING), otherwise a second worker claim could run the same order twice.
+ */
 export async function enqueueProcessOrderJob(
   shop: string,
   kornitxOrderId: number,
   kornitxId: string,
 ) {
+  const key = processOrderKey(kornitxId);
+  const existing = await prisma.syncJob.findUnique({
+    where: { idempotencyKey: key },
+  });
+
+  if (existing?.status === SYNC_JOB_STATUSES.PROCESSING) {
+    return existing;
+  }
+
   const payload: ProcessOrderJobPayload = { kornitxOrderId };
   const now = new Date();
 
   return prisma.syncJob.upsert({
-    where: { idempotencyKey: processOrderKey(kornitxId) },
+    where: { idempotencyKey: key },
     create: {
       shop,
       jobType: SYNC_JOB_TYPES.PROCESS_ORDER,
-      idempotencyKey: processOrderKey(kornitxId),
+      idempotencyKey: key,
       payload: payload as Prisma.InputJsonValue,
       status: SYNC_JOB_STATUSES.PENDING,
       runAfter: now,

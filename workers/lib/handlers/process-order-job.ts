@@ -57,9 +57,11 @@ export async function handleProcessOrderJob(job: SyncJob) {
     if (!result.terminal) {
       await markOrderReceivedForRetry(order.id, message);
 
+      // ERROR (not WARNING): Shopify order was not created — red issue icon + Retry
+      // button while auto-retry backoff continues.
       await upsertOpenOrderIssue(
         order.id,
-        ISSUE_TYPES.WARNING,
+        ISSUE_TYPES.ERROR,
         ISSUE_SOURCES.ORDER_PROCESSING,
         buildOrderCreationRetryWarningMessage(
           message,

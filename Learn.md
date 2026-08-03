@@ -52,6 +52,7 @@ next-connector/
 │       ├── app.orders.tsx           ← KornitX order log + retry
 │       ├── webhooks.kornitx.orders.tsx
 │       ├── webhooks.orders.fulfilled.tsx
+│       ├── webhooks.orders.partially_fulfilled.tsx
 │       ├── webhooks.orders.cancelled.tsx
 │       └── webhooks.inventory.levels_update.tsx
 ├── shared/                 ← Job types + retry backoff helpers
@@ -95,9 +96,9 @@ Prisma turns `schema.prisma` into TypeScript types and SQL tables.
 | `TrackedProduct` | Products you checkbox for inventory sync (EAN/barcode) — saved from `/app/inventory` |
 | `InventorySyncState` | Legacy per-tracked-product sync flags (from inventory UI) |
 | `InventoryDelta` | One row per shop+EAN with latest qty; `status = unsent` until a future sync worker sends it |
-| `KornitxOrder` | One row per KornitX batch order (`kornitxId` unique) |
+| `KornitxOrder` | One row per KornitX batch order (`kornitxId` unique); stores `shopifyFulfillmentStatus` from Shopify webhooks |
 | `KornitxOrderItem` | Line items inside a KornitX order |
-| `ShippingStatusEvent` | “Tell KornitX this order shipped/cancelled” queue |
+| `ShippingStatusEvent` | “Tell KornitX this line shipped/cancelled” queue — unique per `(shopifyOrderId, shopifyLineItemId, status)`; only `sent: false` rows go to KornitX |
 | `SyncJob` | Work queue: `process_order`, `send_fulfillment`, `send_inventory_delta`, `send_inventory_full_feed`, with retry backoff |
 | `JobRun` | Log line every time a worker starts/finishes |
 
@@ -274,6 +275,39 @@ For quick local testing without curl, run `npm run simulate:kornitx-orders`. It 
 
 ---
 
+## Shopify fulfillment webhooks (partial + full)
+
+**Why two topics?** Shopify fires `orders/fulfilled` only when the **whole** order is fulfilled. Partial fulfillments use `orders/partially_fulfilled`. Both are required so KornitX gets per-ItemID dispatch as lines ship.
+
+| Route | Topic | Handler |
+|-------|-------|---------|
+| `app/routes/webhooks.orders.fulfilled.tsx` | `orders/fulfilled` | `handleOrderFulfillmentWebhook` |
+| `app/routes/webhooks.orders.partially_fulfilled.tsx` | `orders/partially_fulfilled` | same |
+| `app/routes/webhooks.orders.cancelled.tsx` | `orders/cancelled` | `handleOrderCancelledWebhook` |
+
+**Shared service:** `app/services/order-fulfillment-webhook.server.ts`
+
+### Story — partial then full fulfill (batched)
+
+1. Warehouse fulfills Item A only → Shopify sends **`orders/partially_fulfilled`**.
+2. Handler stores `shopifyFulfillmentStatus = partial` on `KornitxOrder`.
+3. For each line with `fulfillment_status === "fulfilled"`, creates a `ShippingStatusEvent` (`status: dispatched`) if one does not already exist (unique constraint).
+4. Enqueues one coalesced `send_fulfillment` SyncJob for that order.
+5. Worker sends **only unsent** events → KornitX `PUT /order-item/status` with Item A (status 3).
+6. Later, warehouse fulfills Item B → another **`orders/partially_fulfilled`** (or **`orders/fulfilled`** when all lines are done).
+7. Handler creates a dispatch event for **B only** (A already has a dispatched event → skipped).
+8. Worker sends **B only** — A is already `sent: true`, so it is never re-sent.
+
+### Cancel after partial
+
+`orders/cancelled` creates `cancelled` events only for lines that are **not** already `dispatched`. Already-dispatched ItemIDs are left alone (KornitX has no “un-dispatch”).
+
+### Orders list display
+
+`shared/order-display.ts` → `resolveFulfillmentStatus()` prefers `KornitxOrder.shopifyFulfillmentStatus` (from webhooks). Send-to-KornitX column still comes from shipping events + SyncJob state (`deriveSendFulfillmentStatus`).
+
+---
+
 ### `/app/inventory` — Tracked products (`app/routes/app.inventory.tsx`)
 
 **Story:** Merchant checks which variants send stock to KornitX. Only variants **with a barcode (EAN)** appear. Both **available and unavailable** (out-of-stock) items are listed.
@@ -328,13 +362,13 @@ The loader still fetches **all** barcoded variants from Shopify on enter/reload 
 
 **Table columns:** issue indicator, KornitX ID, order creation status, shape, items, Shopify order name, received date, fulfillment status (Shopify-side), send fulfillment (KornitX sync: unsent / sent / failed), actions.
 
-**Issue popover:** alert icon when the order has open `KornitxOrderIssue` rows (red for errors, amber for warnings only). Click to see ERROR/WARNING messages and timestamps. Issues clear when the underlying problem is resolved (order created, fulfillment sent, etc.). Retryable failures (Shopify/network for order creation, KornitX API for fulfillment send) open a **WARNING** such as `Order creation failed: … 2nd retry at 28/07/2026, 20:45:00.` or `Fulfillment send to KornitX failed: … 2nd retry at …`; terminal failures show **ERROR**.
+**Issue popover:** alert icon when the order has open `KornitxOrderIssue` rows (red for errors, amber for warnings only). Click to see ERROR/WARNING messages and timestamps. Issues clear when the underlying problem is resolved (order created, fulfillment sent, etc.). **Order creation** failures (Shopify/network, including while auto-retry backoff is still scheduled) open an **ERROR** such as `Order creation failed: … 2nd retry at 28/07/2026, 20:45:00.` — the Shopify order was not created. **Fulfillment send** retryable failures open a **WARNING**; terminal fulfillment failures show **ERROR**.
 
 **Actions:**
-- **Retry** — failed order creation; opens a confirmation modal, then `retryFailedOrder` re-enqueues `process_order` for the worker’s next cycle
+- **Retry** — any order-creation failure: status `failed` (auto-retry exhausted) **or** still `received`/`processing` with an open order-processing ERROR while auto-retry is scheduled. Confirmation modal, then `retryFailedOrder` **upserts** the single `process_order:{kornitxId}` SyncJob (`attemptCount` → 0, `nextRunAt` → now) — it does **not** create a second job alongside the auto-retry. If that job is already `processing`, it is left alone so the worker cannot claim it twice.
 - **Resend** (send icon) — unsent/failed fulfillment send; opens a confirmation modal, then `resendFulfillmentForOrder` force-resets the order’s `send_fulfillment` SyncJob (`attemptCount` → 0, `nextRunAt` → now or order received + delay) even if the job is already `pending` from automatic retry backoff
 
-**Display helpers:** `shared/order-display.ts` derives fulfillment status from shipping events and send-fulfillment status from unsent events + SyncJob state.
+**Display helpers:** `shared/order-display.ts` — `resolveFulfillmentStatus()` uses stored Shopify status (`shopifyFulfillmentStatus`); send-fulfillment status still comes from unsent events + SyncJob state.
 
 **Helper files:**
 - `app/models/kornitx-orders.server.ts` — list, retry, resend
@@ -425,7 +459,7 @@ Webhooks enqueue rows; `run-jobs` claims and processes them.
 | `jobType` | Enqueued by | Handler |
 |-----------|-------------|---------|
 | `process_order` | KornitX inbound webhook, manual retry | Shopify `orderCreate` — name `NXT-{kornitxId}`, tags `NXTLabel` + `NXT-` (Torque) |
-| `send_fulfillment` | Shopify fulfilled/cancelled webhooks (one coalesced job per KornitX order) | KornitX shipping PUT — batched orders send all unsent line items in one request |
+| `send_fulfillment` | Shopify fulfilled / partially_fulfilled / cancelled webhooks (one coalesced job per KornitX order) | KornitX shipping PUT — batched orders send all **unsent** line items in one request (already-sent ItemIDs are never re-sent) |
 | `send_inventory_delta` | Inventory webhook (one coalesced job per shop) | KornitX stock PUT |
 | `send_inventory_full_feed` | `run-jobs` scheduler when UK daily time is due | KornitX stock PUT (all tracked EANs) |
 
@@ -463,7 +497,7 @@ Webhooks enqueue rows; `run-jobs` claims and processes them.
 4. Priority: `process_order` → `send_fulfillment` → `send_inventory_delta` → `send_inventory_full_feed`
 5. **`send_inventory_delta`:** skips until `lastInventorySyncAt + Settings.deltaIntervalMinutes`; PUTs unsent `InventoryDelta` rows in batches of 100. After each successful batch, rows in that batch are marked `sent` only if snapshot `quantity` and `updatedAt` still match. `lastInventorySyncAt` advances when any batch succeeds. If a later batch fails, earlier batches stay marked sent and leftovers retry at the next interval (not exponential backoff). Total failure on the first batch still uses retry backoff. Qty **0** is sent when stock drops to zero.
 6. **`send_inventory_full_feed`:** enqueued when Settings has daily full feed enabled and today's UK scheduled time has passed (and not yet successfully run today). Fetches live qty for every enabled `TrackedProduct` at the effective location and PUTs all EANs (including **0** for out of stock). Partial failure stores remaining EANs and retries with exponential backoff.
-6. **`send_fulfillment`:** skips until `orderReceivedAt + FULFILLMENT_DELAY_SECONDS` (default 20 min); loads all unsent `ShippingStatusEvent` rows for the order and sends one PUT (batched: `PUT /order-item/status` with full item array). On retryable failure, upserts a WARNING issue; on terminal failure, upserts an ERROR issue. Success resolves fulfillment issues.
+6. **`send_fulfillment`:** skips until `orderReceivedAt + FULFILLMENT_DELAY_SECONDS` (default 20 min); loads all **unsent** `ShippingStatusEvent` rows for the order and sends one PUT (batched: `PUT /order-item/status` with that item array). Later partial fulfillments only add new unsent events, so previously sent ItemIDs are never re-sent. On retryable failure, upserts a WARNING issue; on terminal failure, upserts an ERROR issue. Success resolves fulfillment issues. **`process_order`** failures (retryable or terminal) upsert an **ERROR** issue and expose manual **Retry**.
 7. Writes `JobRun` metadata per cycle
 
 **Run locally (runs until Ctrl+C):**
@@ -572,7 +606,8 @@ See `.env.example` — mock defaults use [Beeceptor](https://next-connector.free
 | Source | How we avoid duplicates | Status |
 |--------|-------------------------|--------|
 | KornitX POST | Unique `kornitxId` on `KornitxOrder`; duplicate POST returns 200 | **Implemented** |
-| Fulfillment webhook | Unique `(shopifyOrderId, shopifyLineItemId, status)` on `ShippingStatusEvent`; one coalesced `send_fulfillment` SyncJob per order | **Implemented** |
+| Fulfillment webhook | Unique `(shopifyOrderId, shopifyLineItemId, status)` on `ShippingStatusEvent`; only unsent events are PUT to KornitX; one coalesced `send_fulfillment` SyncJob per order | **Implemented** |
+| Manual order Retry + auto-retry | One `process_order:{kornitxId}` SyncJob (`idempotencyKey` unique); manual Retry upserts that row instead of inserting another; skips reset while `processing` | **Implemented** |
 | Inventory webhook | Upsert `InventorySyncState` by tracked product (latest qty wins) | Planned |
 
 ---

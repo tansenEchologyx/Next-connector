@@ -30,6 +30,8 @@ export type OrderListRow = {
   fulfillmentStatus: FulfillmentStatus;
   sendFulfillmentStatus: SendFulfillmentStatus;
   sendFulfillmentError: string | null;
+  /** True when Shopify order creation failed (auto-retry pending or exhausted). */
+  canRetryOrderCreation: boolean;
   canResendFulfillment: boolean;
   activeIssues: Array<{
     id: number;
@@ -48,6 +50,7 @@ type OrderWithRelations = {
   status: string;
   shopifyOrderId: string | null;
   shopifyOrderName: string | null;
+  shopifyFulfillmentStatus: string | null;
   orderReceivedAt: Date;
   items: KornitxOrderItem[];
   shippingEvents: ShippingStatusEvent[];
@@ -59,7 +62,33 @@ type FulfillmentJobInfo = {
   lastError: string | null;
 } | null;
 
-export function deriveFulfillmentStatus(
+/**
+ * Prefer Shopify's fulfillment status (stored from webhooks) for the Orders list.
+ * Falls back to deriving from shipping events only when Shopify status is unset.
+ */
+export function resolveFulfillmentStatus(
+  order: Pick<
+    OrderWithRelations,
+    "status" | "orderShape" | "items" | "shopifyFulfillmentStatus"
+  > & {
+    shippingEvents: ShippingStatusEvent[];
+  },
+): FulfillmentStatus {
+  if (order.status !== "created") {
+    return "pending";
+  }
+
+  const stored = order.shopifyFulfillmentStatus;
+  if (stored === "cancelled") return "cancelled";
+  if (stored === "fulfilled") return "fulfilled";
+  if (stored === "partial") return "partial";
+  if (stored === "unfulfilled") return "unfulfilled";
+
+  return deriveFulfillmentStatusFromEvents(order);
+}
+
+/** Legacy fallback when shopifyFulfillmentStatus has not been set yet. */
+export function deriveFulfillmentStatusFromEvents(
   order: Pick<OrderWithRelations, "status" | "orderShape" | "items"> & {
     shippingEvents: ShippingStatusEvent[];
   },
@@ -73,34 +102,56 @@ export function deriveFulfillmentStatus(
     return "unfulfilled";
   }
 
-  const hasCancelled = events.some((event) => event.status === "cancelled");
+  const cancelledCount = events.filter(
+    (event) => event.status === "cancelled",
+  ).length;
   const dispatchedCount = events.filter(
     (event) => event.status === "dispatched",
   ).length;
+  const itemCount = order.items.length;
+  const terminalCount = cancelledCount + dispatchedCount;
 
-  if (hasCancelled && dispatchedCount === 0) {
-    return "cancelled";
-  }
-
-  if (order.orderShape === "batched") {
-    const itemCount = order.items.length;
-    if (dispatchedCount > 0 && dispatchedCount < itemCount) {
+  if (order.orderShape === "batched" && itemCount > 0) {
+    if (terminalCount > 0 && terminalCount < itemCount) {
       return "partial";
     }
-    if (hasCancelled && dispatchedCount > 0 && dispatchedCount < itemCount) {
+    if (dispatchedCount === itemCount) {
+      return "fulfilled";
+    }
+    if (cancelledCount === itemCount) {
+      return "cancelled";
+    }
+    if (dispatchedCount > 0 && cancelledCount > 0) {
       return "partial";
     }
   }
 
-  if (dispatchedCount > 0) {
+  if (dispatchedCount > 0 && cancelledCount === 0) {
     return "fulfilled";
   }
 
-  if (hasCancelled) {
+  if (cancelledCount > 0 && dispatchedCount === 0) {
     return "cancelled";
   }
 
+  if (dispatchedCount > 0 && cancelledCount > 0) {
+    return "partial";
+  }
+
   return "unfulfilled";
+}
+
+/** @deprecated Use resolveFulfillmentStatus */
+export function deriveFulfillmentStatus(
+  order: Pick<OrderWithRelations, "status" | "orderShape" | "items"> & {
+    shippingEvents: ShippingStatusEvent[];
+    shopifyFulfillmentStatus?: string | null;
+  },
+): FulfillmentStatus {
+  return resolveFulfillmentStatus({
+    ...order,
+    shopifyFulfillmentStatus: order.shopifyFulfillmentStatus ?? null,
+  });
 }
 
 export function deriveSendFulfillmentStatus(
@@ -148,15 +199,39 @@ export function formatShopifyOrderLabel(
   return match ? `#${match[1]}` : shopifyOrderId;
 }
 
+const ORDER_PROCESSING_SOURCE = "order_processing";
+
+export function canRetryOrderCreation(order: {
+  status: string;
+  issues: Array<{ resolvedAt: Date | null; source: string }>;
+}): boolean {
+  if (order.status === "created") return false;
+  if (order.status === "failed") return true;
+
+  return order.issues.some(
+    (issue) =>
+      issue.resolvedAt === null && issue.source === ORDER_PROCESSING_SOURCE,
+  );
+}
+
 export function serializeOrderListRow(
   order: OrderWithRelations,
   fulfillmentJob: FulfillmentJobInfo,
 ): OrderListRow {
-  const fulfillmentStatus = deriveFulfillmentStatus(order);
+  const fulfillmentStatus = resolveFulfillmentStatus(order);
   const sendInfo = deriveSendFulfillmentStatus(
     order.shippingEvents,
     fulfillmentJob,
   );
+  const activeIssues = order.issues
+    .filter((issue) => issue.resolvedAt === null)
+    .map((issue) => ({
+      id: issue.id,
+      type: issue.type,
+      source: issue.source,
+      message: issue.message,
+      createdAt: issue.createdAt,
+    }));
 
   return {
     id: order.id,
@@ -171,16 +246,9 @@ export function serializeOrderListRow(
     fulfillmentStatus,
     sendFulfillmentStatus: sendInfo.status,
     sendFulfillmentError: sendInfo.error,
+    canRetryOrderCreation: canRetryOrderCreation(order),
     canResendFulfillment: sendInfo.canResend,
-    activeIssues: order.issues
-      .filter((issue) => issue.resolvedAt === null)
-      .map((issue) => ({
-        id: issue.id,
-        type: issue.type,
-        source: issue.source,
-        message: issue.message,
-        createdAt: issue.createdAt,
-      })),
+    activeIssues,
   };
 }
 

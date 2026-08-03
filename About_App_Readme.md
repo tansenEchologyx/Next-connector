@@ -2,7 +2,7 @@
 
 Documentation of **features built so far** in the Next Connector Shopify app (KornitX / Next Label Plus integration).
 
-_Last updated: Next Label Plus order settings (shipping address, pre-emptive prefix) and permanent config-failure rules._
+_Last updated: Manual Retry for order-creation failures while auto-retry is still pending; creation failures use ERROR issue indicator._
 
 ---
 
@@ -37,7 +37,7 @@ This file lists only what is **implemented today**.
   - **TrackedProduct** — products selected for inventory sync
   - **InventorySyncState** — legacy per-product sync state (from inventory UI)
   - **InventoryDelta** — unsent inventory changes per EAN (from inventory webhook)
-  - **KornitxOrder** / **KornitxOrderItem** — inbound KornitX orders (`shopifyOrderName` stored when Shopify order is created)
+  - **KornitxOrder** / **KornitxOrderItem** — inbound KornitX orders (`shopifyOrderName` when created; `shopifyFulfillmentStatus` from Shopify webhooks: unfulfilled / partial / fulfilled / cancelled)
   - **KornitxOrderIssue** — active warnings/errors per order (order processing, fulfillment send); retryable failures surface as warnings with the next retry time
   - **ShippingStatusEvent** — fulfillment events queued for KornitX
   - **SyncJob** — unified work queue (`process_order`, `send_fulfillment`, `send_inventory_delta`, `send_inventory_full_feed`)
@@ -52,15 +52,16 @@ This file lists only what is **implemented today**.
 | `/app` | Dashboard — order counts, unsent inventory deltas, recent worker runs, setup warnings |
 | `/app/settings` | Full-width page — KornitX Ref ID, B2B customer, **Next Label Plus orders** (pre-emptive prefix + require toggle), **Inventory sync** (delta interval minutes, location, use-primary toggle, daily full-feed enable + UK time), inbound webhook URL |
 | `/app/inventory` | Full-width paginated product table with checkboxes — **all shop barcoded variants**; qty/availability at configured location; search + availability + tracking filters; page size 10/25/50; optional **Show tracked first** (default off; reorder after Save when on) |
-| `/app/orders` | Full-width paginated KornitX order list — times in **UK timezone**; search/filters, issues, fulfillment actions |
+| `/app/orders` | Full-width paginated KornitX order list — times in **UK timezone**; search/filters (including Shopify fulfillment status), issues, **Retry** on any order-creation failure (auto-retry pending or exhausted), fulfillment Resend |
 
 ### 4. Webhooks
 
 | Endpoint | Source | What it does |
 |----------|--------|--------------|
 | `POST /webhooks/kornitx/orders` | KornitX | Saves order + enqueues `process_order` SyncJob |
-| `POST /webhooks/orders/fulfilled` | Shopify | Saves dispatch event(s) + one coalesced `send_fulfillment` job per order (`FULFILLMENT_DELAY_SECONDS` after order received) |
-| `POST /webhooks/orders/cancelled` | Shopify | Saves cancel event(s) + one coalesced `send_fulfillment` job per order (`FULFILLMENT_DELAY_SECONDS` after order received) |
+| `POST /webhooks/orders/fulfilled` | Shopify | Stores Shopify fulfillment status; creates `dispatched` events only for newly fulfilled lines; coalesced `send_fulfillment` job (`FULFILLMENT_DELAY_SECONDS` after order received) |
+| `POST /webhooks/orders/partially_fulfilled` | Shopify | Same handler as fulfilled — needed because Shopify does **not** fire `orders/fulfilled` for partial fulfillments; later fulfillments only queue unsent ItemIDs |
+| `POST /webhooks/orders/cancelled` | Shopify | Stores cancelled status; creates `cancelled` events only for lines **not** already dispatched; coalesced `send_fulfillment` job |
 | `POST /webhooks/inventory/levels_update` | Shopify | Upserts unsent `InventoryDelta` + coalesced `send_inventory_delta` job |
 
 KornitX inbound auth is configured in `.env` (`KORNITX_WEBHOOK_BASIC_*` or `KORNITX_WEBHOOK_OAUTH_TOKEN`).
@@ -81,7 +82,7 @@ KornitX inbound auth is configured in `.env` (`KORNITX_WEBHOOK_BASIC_*` or `KORN
    - **`send_inventory_delta`** — KornitX stock PUT for unsent `InventoryDelta` rows in batches of 100 (respects **Settings → Inventory delta interval** minutes since `lastInventorySyncAt`). Each successful batch is marked `sent` immediately (optimistic `quantity` + `updatedAt` check). On partial batch failure, earlier batches stay marked sent, `lastInventorySyncAt` advances, and leftovers retry at the next interval — not exponential backoff. Qty **0** is sent when stock drops to zero.
    - **`send_inventory_full_feed`** — once per UK day (when enabled): GraphQL-fetch live qty for **all** enabled `TrackedProduct` rows at the effective location, PUT to KornitX in batches of 100. Every tracked EAN is included; out-of-stock items send **`quantity_available: 0`** (never omitted). Failures use exponential backoff; partial batch failure stores remaining EANs in the job payload for retry.
 6. Marks each job **`processing`** while in flight (safe for multiple worker instances later)
-7. Retryable errors use exponential backoff on the SyncJob (`nextRunAt`, up to 8 attempts). **Configuration errors** (missing B2B customer, shipping address, required prefix, inventory location, Ref ID, API key) fail **immediately** with no backoff — order/fulfillment need a manual Retry/Resend; inventory jobs self-heal on the next cycle after settings are fixed
+7. Retryable errors use exponential backoff on the SyncJob (`nextRunAt`, up to 8 attempts). Order-creation failures also show a manual **Retry** button while backoff is running and after attempts are exhausted — Retry **upserts** the same `process_order` job (no duplicate queue rows; skips reset if already `processing`). **Configuration errors** (missing B2B customer, required prefix when required, inventory location, Ref ID, API key) fail **immediately** with no backoff — order/fulfillment need a manual Retry/Resend; inventory jobs self-heal on the next cycle after settings are fixed
 8. Writes a **JobRun** summary per cycle
 
 **Before order processing:** B2B customer in `/app/settings`. Optional: pre-emptive prefix (required only when “Require prefix” is on). KornitX **EAN = Shopify variant barcode**. Created Shopify orders use name `NXT-{kornitxId}` and tags `NXTLabel`, `NXT-`, plus `next-live` / `next-preemptive` from the prefix (for Torque filtering vs web orders). If the B2B customer has a default Shopify address it is attached; otherwise the order is created without a shipping address.

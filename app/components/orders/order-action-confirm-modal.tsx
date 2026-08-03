@@ -37,7 +37,7 @@ function modalCopy(action: OrderConfirmAction | null) {
   if (action.intent === "retry") {
     return {
       heading: "Retry order creation?",
-      body: `This will retry creating order ${action.kornitxId} in Shopify. A new job will be added to the sync queue and the worker will pick it up on the next cycle.`,
+      body: `This will retry creating order ${action.kornitxId} in Shopify now. It reuses the existing process_order job (no duplicate queue entries) — if an automatic retry is scheduled, that same job is reset to run on the next worker cycle.`,
     };
   }
 
