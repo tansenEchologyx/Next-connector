@@ -38,7 +38,8 @@ export function OrderIssuesPopover({ orderId, issues }: OrderIssuesPopoverProps)
         id={triggerId}
         variant="tertiary"
         accessibilityLabel={`Open issues (${issues.length})`}
-        interestFor={popoverId}
+        commandFor={popoverId}
+        command="--toggle"
       >
         <s-icon type="alert-circle" tone={iconTone} />
       </s-button>
@@ -56,15 +57,13 @@ export function OrderIssuesPopover({ orderId, issues }: OrderIssuesPopoverProps)
                   ? "ERROR"
                   : issueTypeLabel(issue.type);
               return (
-              <s-stack key={issue.id} direction="block" gap="small">
-                <s-badge tone={tone}>
-                  {label}
-                </s-badge>
-                <s-paragraph>{issue.message}</s-paragraph>
-                <s-text color="subdued">
-                  {formatOrderDate(issue.createdAt)}
-                </s-text>
-              </s-stack>
+                <s-stack key={issue.id} direction="block" gap="small">
+                  <s-badge tone={tone}>{label}</s-badge>
+                  <s-paragraph>{issue.message}</s-paragraph>
+                  <s-text color="subdued">
+                    {formatOrderDate(issue.createdAt)}
+                  </s-text>
+                </s-stack>
               );
             })}
           </s-stack>
