@@ -10,7 +10,6 @@ import {
   enqueueSendFulfillmentJobIfNeeded,
 } from "./sync-jobs.server";
 import {
-  deriveFulfillmentStatus,
   deriveSendFulfillmentStatus,
   serializeOrderListRow,
 } from "../../shared/order-display";
@@ -58,20 +57,19 @@ function buildWhere(filters: OrderListFilters): Prisma.KornitxOrderWhereInput {
       break;
     case "unfulfilled":
       where.status = "created";
-      where.shippingEvents = { none: {} };
+      where.OR = [
+        { shopifyFulfillmentStatus: null },
+        { shopifyFulfillmentStatus: "unfulfilled" },
+      ];
       break;
     case "fulfilled":
-      where.shippingEvents = { some: { status: "dispatched" } };
+      where.shopifyFulfillmentStatus = "fulfilled";
       break;
     case "cancelled":
-      where.shippingEvents = {
-        some: { status: "cancelled" },
-        none: { status: "dispatched" },
-      };
+      where.shopifyFulfillmentStatus = "cancelled";
       break;
     case "partial":
-      where.orderShape = "batched";
-      where.shippingEvents = { some: { status: "dispatched" } };
+      where.shopifyFulfillmentStatus = "partial";
       break;
   }
 
@@ -126,7 +124,7 @@ const orderInclude = {
 };
 
 function needsInMemoryFilter(filters: OrderListFilters): boolean {
-  return filters.fulfillment === "partial" || filters.sendFulfillment === "failed";
+  return filters.sendFulfillment === "failed";
 }
 
 function matchesInMemoryFilters(
@@ -140,16 +138,6 @@ function matchesInMemoryFilters(
   filters: OrderListFilters,
   fulfillmentJobs: Map<string, { status: string; lastError: string | null }>,
 ): boolean {
-  if (filters.fulfillment === "partial") {
-    const fulfillmentStatus = deriveFulfillmentStatus({
-      status: order.status,
-      orderShape: order.orderShape,
-      items: order.items as never,
-      shippingEvents: order.shippingEvents as never,
-    });
-    if (fulfillmentStatus !== "partial") return false;
-  }
-
   if (filters.sendFulfillment === "failed") {
     const sendInfo = deriveSendFulfillmentStatus(
       order.shippingEvents as never,
@@ -229,10 +217,37 @@ export async function listOrders(filters: OrderListFilters) {
   };
 }
 
+/**
+ * Manual retry for Shopify order creation failures — both while auto-retry
+ * backoff is still running (status often `received`) and after attempts are
+ * exhausted (`failed`).
+ *
+ * Does not create a second SyncJob: `enqueueProcessOrderJob` upserts the
+ * single `process_order:{kornitxId}` row (resets nextRunAt to now). If that
+ * job is already PROCESSING, it is left alone so the worker cannot claim it twice.
+ */
 export async function retryFailedOrder(shop: string, orderId: number) {
-  const order = await prisma.kornitxOrder.findUnique({ where: { id: orderId } });
-  if (!order || order.status !== "failed") {
-    throw new Error("Only failed orders can be retried");
+  const order = await prisma.kornitxOrder.findUnique({
+    where: { id: orderId },
+    include: { issues: true },
+  });
+
+  if (!order) {
+    throw new Error("Order not found");
+  }
+
+  if (order.status === "created") {
+    throw new Error("Order already created in Shopify");
+  }
+
+  const hasCreationIssue = order.issues.some(
+    (issue) =>
+      issue.resolvedAt === null &&
+      issue.source === ISSUE_SOURCES.ORDER_PROCESSING,
+  );
+
+  if (order.status !== "failed" && !hasCreationIssue) {
+    throw new Error("Only orders with a creation failure can be retried");
   }
 
   const updated = await prisma.kornitxOrder.update({
@@ -241,6 +256,7 @@ export async function retryFailedOrder(shop: string, orderId: number) {
   });
 
   await resolveOrderIssuesBySource(orderId, ISSUE_SOURCES.ORDER_PROCESSING);
+  // Idempotent: one SyncJob per kornitxId; coalesces with any pending auto-retry.
   await enqueueProcessOrderJob(shop, updated.id, updated.kornitxId);
 
   return updated;

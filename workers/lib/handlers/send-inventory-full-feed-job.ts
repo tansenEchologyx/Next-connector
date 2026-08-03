@@ -3,7 +3,10 @@ import type { Prisma, SyncJob } from "@prisma/client";
 import { getOfflineAccessToken } from "../../../app/services/shopify-offline.server";
 import { resolveEffectiveInventoryLocation } from "../../../shared/inventory-location";
 import type { SendInventoryFullFeedJobPayload } from "../../../shared/sync-job-types";
-import { loadAppSettings } from "../app-settings";
+import {
+  assertInventoryOutboundSettings,
+  loadAppSettings,
+} from "../app-settings";
 import {
   MAX_EANS_PER_BATCH,
   sendStockAvailabilityBatchToKornitx,
@@ -108,6 +111,16 @@ export async function handleSendInventoryFullFeedJob(job: SyncJob) {
       `[run-jobs] Full feed job ${job.id} for ${job.shop}: no remaining EANs — marked complete`,
     );
     return { outcome: "nothing_to_send" as const, sentCount: 0 };
+  }
+
+  try {
+    assertInventoryOutboundSettings(settings);
+  } catch (error) {
+    await failSyncJobWithBackoff(job, error);
+    return {
+      outcome: "error" as const,
+      message: error instanceof Error ? error.message : String(error),
+    };
   }
 
   try {

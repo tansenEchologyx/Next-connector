@@ -2,7 +2,10 @@ import type { InventoryDelta, SyncJob } from "@prisma/client";
 
 import { enqueueSendInventoryDeltaJobIfNeeded } from "../../../app/models/sync-jobs.server";
 import { isInventorySyncDue, computeInventoryRunAfter } from "../../../shared/inventory-sync";
-import { loadAppSettings } from "../app-settings";
+import {
+  assertInventoryOutboundSettings,
+  loadAppSettings,
+} from "../app-settings";
 import {
   MAX_EANS_PER_BATCH,
   sendStockAvailabilityBatchToKornitx,
@@ -117,6 +120,16 @@ export async function handleSendInventoryDeltaJob(job: SyncJob) {
     );
     await completeSyncJob(job.id);
     return { outcome: "nothing_to_send" as const };
+  }
+
+  try {
+    assertInventoryOutboundSettings(settings);
+  } catch (error) {
+    await failSyncJobWithBackoff(job, error);
+    return {
+      outcome: "error" as const,
+      message: error instanceof Error ? error.message : String(error),
+    };
   }
 
   const syncTime = new Date();

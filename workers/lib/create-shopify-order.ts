@@ -1,6 +1,8 @@
 import type { AppSettings, KornitxOrder, KornitxOrderItem } from "@prisma/client";
 
+import { normalizePreemptiveOrderPrefix } from "../../app/models/app-settings.server";
 import { formatUserErrors, shopifyAdminGraphql } from "./shopify-graphql";
+import type { OrderShippingAddress } from "./resolve-shipping-address";
 
 type VariantLookupResult = {
   variantId: string;
@@ -110,16 +112,43 @@ function buildLineItemPriceSet(
   return priceSet;
 }
 
-function buildOrderTags(order: KornitxOrder, items: KornitxOrderItem[]): string[] {
-  const tags = ["kornitx", "next-label-plus"];
+function isPreemptiveRef(
+  orderExternalRef: string,
+  prefix: string | null,
+): boolean {
+  if (!prefix) return false;
+  return orderExternalRef.toUpperCase().startsWith(prefix);
+}
+
+function buildOrderTags(
+  order: KornitxOrder,
+  items: KornitxOrderItem[],
+  preemptivePrefix: string | null,
+): string[] {
+  const tags = ["kornitx", "next-label-plus", "NXTLabel", "NXT-"];
   const externalRefs = [...new Set(items.map((item) => item.orderExternalRef))];
 
   for (const ref of externalRefs) {
     tags.push(`ext-ref:${ref}`);
   }
 
+  const hasPreemptive = items.some((item) =>
+    isPreemptiveRef(item.orderExternalRef, preemptivePrefix),
+  );
+  const hasLive = items.some(
+    (item) => !isPreemptiveRef(item.orderExternalRef, preemptivePrefix),
+  );
+
+  if (hasPreemptive) tags.push("next-preemptive");
+  if (hasLive || !hasPreemptive) tags.push("next-live");
+
   tags.push(`kornitx-id:${order.kornitxId}`);
   return tags;
+}
+
+/** Shopify order name so Torque can filter Next Label Plus orders from web orders. */
+export function buildNxtOrderName(kornitxId: string): string {
+  return `NXT-${kornitxId}`;
 }
 
 function matchLineItems(
@@ -164,12 +193,16 @@ export async function createShopifyOrderFromKornitx(
   settings: AppSettings,
   order: KornitxOrder,
   items: KornitxOrderItem[],
+  shippingAddress: OrderShippingAddress | null,
 ): Promise<CreateShopifyOrderResult> {
   const variantByItemId = new Map<string, string>();
   const lineItemsInput: Array<Record<string, unknown>> = [];
   const shopCurrency = await getShopCurrencyCode(shop, accessToken);
   const orderCurrency = order.currency;
   const usePresentmentCurrency = orderCurrency !== shopCurrency;
+  const preemptivePrefix = normalizePreemptiveOrderPrefix(
+    settings.preemptiveOrderPrefix,
+  );
 
   for (const item of items) {
     const variant = await lookupVariantByEan(shop, accessToken, item.ean);
@@ -240,6 +273,7 @@ export async function createShopifyOrderFromKornitx(
       }`,
     {
       order: {
+        name: buildNxtOrderName(order.kornitxId),
         currency: usePresentmentCurrency ? shopCurrency : orderCurrency,
         ...(usePresentmentCurrency
           ? { presentmentCurrency: orderCurrency }
@@ -249,8 +283,24 @@ export async function createShopifyOrderFromKornitx(
             id: settings.b2bCustomerId,
           },
         },
+        ...(shippingAddress
+          ? {
+              shippingAddress: {
+                firstName: shippingAddress.firstName,
+                lastName: shippingAddress.lastName,
+                company: shippingAddress.company,
+                address1: shippingAddress.address1,
+                address2: shippingAddress.address2,
+                city: shippingAddress.city,
+                province: shippingAddress.province,
+                zip: shippingAddress.zip,
+                countryCode: shippingAddress.countryCode,
+                phone: shippingAddress.phone,
+              },
+            }
+          : {}),
         lineItems: lineItemsInput,
-        tags: buildOrderTags(order, items),
+        tags: buildOrderTags(order, items, preemptivePrefix),
         note: `KornitX batch ${order.kornitxId} (${order.orderShape})`,
         sourceName: "kornitx",
         sourceIdentifier: order.kornitxId,

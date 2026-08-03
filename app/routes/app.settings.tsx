@@ -10,6 +10,8 @@ import { boundary } from "@shopify/shopify-app-react-router/server";
 
 import {
   getOrCreateAppSettings,
+  isValidPreemptiveOrderPrefix,
+  normalizePreemptiveOrderPrefix,
   updateAppSettings,
 } from "../models/app-settings.server";
 import { fetchCustomers, fetchLocations } from "../services/shopify-admin.server";
@@ -81,6 +83,42 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     formData.get("usePrimaryInventoryLocation") === "on";
   const dailyFullFeedEnabled = formData.get("dailyFullFeedEnabled") === "on";
   const dailyFullFeedTime = String(formData.get("dailyFullFeedTime") ?? "").trim();
+  const deltaIntervalMinutesRaw = String(
+    formData.get("deltaIntervalMinutes") ?? "",
+  ).trim();
+  const deltaIntervalMinutes = Number(deltaIntervalMinutesRaw);
+  const requirePreemptivePrefix =
+    formData.get("requirePreemptivePrefix") === "on";
+  const preemptiveOrderPrefix = normalizePreemptiveOrderPrefix(
+    String(formData.get("preemptiveOrderPrefix") ?? ""),
+  );
+
+  if (
+    !Number.isInteger(deltaIntervalMinutes) ||
+    deltaIntervalMinutes < 1 ||
+    deltaIntervalMinutes > 1440
+  ) {
+    return {
+      ok: false as const,
+      error:
+        "Inventory delta interval must be a whole number of minutes between 1 and 1440.",
+    };
+  }
+
+  if (preemptiveOrderPrefix && !isValidPreemptiveOrderPrefix(preemptiveOrderPrefix)) {
+    return {
+      ok: false as const,
+      error: "Pre-emptive order prefix must be exactly 2 letters (A–Z).",
+    };
+  }
+
+  if (requirePreemptivePrefix && !preemptiveOrderPrefix) {
+    return {
+      ok: false as const,
+      error:
+        "Require prefix is enabled — enter a 2-letter pre-emptive order prefix.",
+    };
+  }
 
   if (dailyFullFeedEnabled) {
     if (!parseUkTimeOfDay(dailyFullFeedTime)) {
@@ -114,6 +152,9 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     usePrimaryInventoryLocation,
     dailyFullFeedEnabled,
     dailyFullFeedTime,
+    deltaIntervalMinutes,
+    preemptiveOrderPrefix,
+    requirePreemptivePrefix,
   });
 
   return { ok: true as const };
@@ -142,6 +183,15 @@ export default function SettingsPage() {
   const [dailyFullFeedTime, setDailyFullFeedTime] = useState(
     settings.dailyFullFeedTime,
   );
+  const [deltaIntervalMinutes, setDeltaIntervalMinutes] = useState(
+    String(settings.deltaIntervalMinutes ?? 30),
+  );
+  const [preemptiveOrderPrefix, setPreemptiveOrderPrefix] = useState(
+    settings.preemptiveOrderPrefix ?? "",
+  );
+  const [requirePreemptivePrefix, setRequirePreemptivePrefix] = useState(
+    settings.requirePreemptivePrefix,
+  );
 
   useEffect(() => {
     if (actionData?.ok) {
@@ -152,6 +202,9 @@ export default function SettingsPage() {
       setUsePrimaryInventoryLocation(settings.usePrimaryInventoryLocation);
       setDailyFullFeedEnabled(settings.dailyFullFeedEnabled);
       setDailyFullFeedTime(settings.dailyFullFeedTime);
+      setDeltaIntervalMinutes(String(settings.deltaIntervalMinutes ?? 30));
+      setPreemptiveOrderPrefix(settings.preemptiveOrderPrefix ?? "");
+      setRequirePreemptivePrefix(settings.requirePreemptivePrefix);
     } else if (actionData && "error" in actionData && actionData.error) {
       shopify.toast.show(actionData.error, { isError: true });
     }
@@ -182,7 +235,7 @@ export default function SettingsPage() {
                 name="kornitxRefId"
                 value={kornitxRefId}
                 onChange={(event) => setKornitxRefId(readPolarisValue(event))}
-                details="Your KornitX account code (REFID). Used for outbound stock and shipping API calls. Inbound webhook auth stays in .env."
+                details="Your KornitX account code (REFID). Used for outbound stock and shipping API calls. API key stays in .env (KORNITX_API_KEY)."
               />
             </s-stack>
           </s-section>
@@ -204,14 +257,67 @@ export default function SettingsPage() {
                 ))}
               </s-select>
               <s-paragraph tone="neutral" color="subdued">
-                KornitX orders are created in Shopify with this customer attached.
-                The customer&apos;s saved address in Shopify is used if present.
+                KornitX orders are created in Shopify with this customer
+                attached. If the customer has a default address in Shopify, it
+                is used on the order; otherwise the order is created without a
+                shipping address.
               </s-paragraph>
+            </s-stack>
+          </s-section>
+
+          <s-section heading="Next Label Plus orders">
+            <s-stack direction="block" gap="base">
+              <s-text-field
+                label="Pre-emptive order prefix"
+                name="preemptiveOrderPrefix"
+                value={preemptiveOrderPrefix}
+                maxLength={2}
+                onChange={(event) =>
+                  setPreemptiveOrderPrefix(
+                    readPolarisValue(event).toUpperCase().slice(0, 2),
+                  )
+                }
+                details="First 2 letters of OrderExternalRef for pre-emptive orders. Confirm with the Next team before requiring it."
+              />
+              <s-checkbox
+                checked={requirePreemptivePrefix}
+                onChange={(event) =>
+                  setRequirePreemptivePrefix(readPolarisChecked(event))
+                }
+                label="Require prefix before creating orders"
+                details="When enabled, orders fail until a valid 2-letter prefix is set. Turn on once Next confirms the prefix."
+              />
+              {requirePreemptivePrefix ? (
+                <input
+                  type="hidden"
+                  name="requirePreemptivePrefix"
+                  value="on"
+                />
+              ) : null}
+
+              <s-box padding="base" background="subdued" borderRadius="base">
+                <s-stack direction="block" gap="small">
+                  <s-text type="strong">Expected inbound values</s-text>
+                  <s-paragraph tone="neutral" color="subdued">
+                    Brand: Chinti &amp; Parker Ltd · Destination: NextRDC ·
+                    Currency: GBP
+                  </s-paragraph>
+                </s-stack>
+              </s-box>
             </s-stack>
           </s-section>
 
           <s-section heading="Inventory sync">
             <s-stack direction="block" gap="base">
+              <s-text-field
+                label="Inventory delta interval (minutes)"
+                name="deltaIntervalMinutes"
+                value={deltaIntervalMinutes}
+                onChange={(event) =>
+                  setDeltaIntervalMinutes(readPolarisValue(event))
+                }
+                details="How often unsent stock changes are sent to KornitX (default 30). Lower during peak if Next accepts the frequency and Shopify rate limits allow it."
+              />
               <s-checkbox
                 checked={usePrimaryInventoryLocation}
                 onChange={(event) =>

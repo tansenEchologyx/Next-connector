@@ -6,7 +6,7 @@ import { authenticate } from "../shopify.server";
 export const action = async ({ request }: ActionFunctionArgs) => {
   const { shop, payload, topic } = await authenticate.webhook(request);
 
-  console.log(`[orders/fulfilled] Received ${topic} for ${shop}`);
+  console.log(`[orders/partially_fulfilled] Received ${topic} for ${shop}`);
 
   const result = await handleOrderFulfillmentWebhook(
     shop,
@@ -14,7 +14,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
   );
 
   console.log(
-    `[orders/fulfilled] Created ${result.created} shipping event(s) (${result.reason})`,
+    `[orders/partially_fulfilled] Created ${result.created} shipping event(s) (${result.reason})`,
   );
 
   return new Response();

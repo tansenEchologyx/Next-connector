@@ -6,14 +6,21 @@ import {
   resolveOrderIssuesBySource,
   upsertOpenOrderIssue,
 } from "../../../app/models/kornitx-order-issues.server";
-import { buildFulfillmentSendRetryWarningMessage } from "../../../shared/order-processing-issues";
+import { isConfigurationError } from "../../../shared/configuration-error";
+import {
+  buildFulfillmentConfigFailureMessage,
+  buildFulfillmentSendRetryWarningMessage,
+} from "../../../shared/order-processing-issues";
 import { enqueueSendFulfillmentJobIfNeeded } from "../../../app/models/sync-jobs.server";
 import type { SendFulfillmentJobPayload } from "../../../shared/sync-job-types";
 import {
   computeFulfillmentRunAfter,
   isFulfillmentSendDue,
 } from "../../../shared/fulfillment-sync";
-import { loadAppSettings } from "../app-settings";
+import {
+  assertKornitxCredentials,
+  loadAppSettings,
+} from "../app-settings";
 import { sendShippingStatusesToKornitx } from "../kornitx-shipping";
 import { prisma } from "../prisma";
 import {
@@ -88,6 +95,7 @@ export async function handleSendFulfillmentJob(job: SyncJob) {
   const settings = await loadAppSettings(job.shop);
 
   try {
+    assertKornitxCredentials(settings);
     await sendShippingStatusesToKornitx(settings, order, unsent);
 
     const now = new Date();
@@ -131,7 +139,9 @@ export async function handleSendFulfillmentJob(job: SyncJob) {
         order.id,
         ISSUE_TYPES.ERROR,
         ISSUE_SOURCES.FULFILLMENT_SEND,
-        `Fulfillment status could not be sent to KornitX: ${message}`,
+        isConfigurationError(error)
+          ? buildFulfillmentConfigFailureMessage(message)
+          : `Fulfillment status could not be sent to KornitX: ${message}`,
       );
     } else {
       await upsertOpenOrderIssue(

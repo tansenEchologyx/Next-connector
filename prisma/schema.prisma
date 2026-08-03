@@ -46,8 +46,10 @@ model AppSettings {
   lastDailyFullFeedAt         DateTime?
   b2bCustomerId               String    @default("")
   defaultShippingAddress      Json      @default("{}")
+  useCustomerShippingAddress  Boolean   @default(false)
   inboundAuthType             String    @default("basic")
   preemptiveOrderPrefix       String?
+  requirePreemptivePrefix     Boolean   @default(false)
   lastInventorySyncAt         DateTime?
   createdAt                   DateTime  @default(now())
   updatedAt                   DateTime  @updatedAt
@@ -95,6 +97,7 @@ model KornitxOrder {
   status           String                @default("received") // received | processing | created | failed
   shopifyOrderId   String?
   shopifyOrderName String?
+  shopifyFulfillmentStatus String? // unfulfilled | partial | fulfilled | cancelled (from Shopify)
   orderReceivedAt  DateTime              @default(now())
   failureReason    String?
   items            KornitxOrderItem[]

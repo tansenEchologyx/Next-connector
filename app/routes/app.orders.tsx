@@ -256,7 +256,7 @@ export default function OrdersPage() {
                           <OrderRowActions
                             orderId={order.id}
                             kornitxId={order.kornitxId}
-                            status={order.status}
+                            canRetryOrderCreation={order.canRetryOrderCreation}
                             canResendFulfillment={order.canResendFulfillment}
                             isSubmitting={isSubmitting}
                             onRequestConfirm={handleRequestConfirm}
