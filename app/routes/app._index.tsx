@@ -4,6 +4,7 @@ import { boundary } from "@shopify/shopify-app-react-router/server";
 
 import { getOrCreateAppSettings } from "../models/app-settings.server";
 import { countUnsentInventoryDeltas } from "../models/inventory-delta.server";
+import { countOpenInventorySyncIssues } from "../models/inventory-sync-issues.server";
 import { getOrderStatusCounts } from "../models/kornitx-orders.server";
 import prisma from "../db.server";
 import { formatUkDateTime } from "../../shared/uk-time";
@@ -12,19 +13,26 @@ import { authenticate } from "../shopify.server";
 export const loader = async ({ request }: LoaderFunctionArgs) => {
   const { session } = await authenticate.admin(request);
 
-  const [settings, orderCounts, pendingSyncCount, trackedCount, recentJobRuns] =
-    await Promise.all([
-      getOrCreateAppSettings(session.shop),
-      getOrderStatusCounts(),
-      countUnsentInventoryDeltas(session.shop),
-      prisma.trackedProduct.count({
-        where: { shop: session.shop, enabled: true },
-      }),
-      prisma.jobRun.findMany({
-        orderBy: { startedAt: "desc" },
-        take: 5,
-      }),
-    ]);
+  const [
+    settings,
+    orderCounts,
+    pendingSyncCount,
+    trackedCount,
+    recentJobRuns,
+    openInventoryIssueCount,
+  ] = await Promise.all([
+    getOrCreateAppSettings(session.shop),
+    getOrderStatusCounts(),
+    countUnsentInventoryDeltas(session.shop),
+    prisma.trackedProduct.count({
+      where: { shop: session.shop, enabled: true },
+    }),
+    prisma.jobRun.findMany({
+      orderBy: { startedAt: "desc" },
+      take: 5,
+    }),
+    countOpenInventorySyncIssues(session.shop),
+  ]);
 
   const settingsComplete = Boolean(
     settings.b2bCustomerId.startsWith("gid://shopify/Customer/"),
@@ -36,6 +44,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     trackedCount,
     recentJobRuns,
     settingsComplete,
+    openInventoryIssueCount,
   };
 };
 
@@ -59,6 +68,7 @@ export default function DashboardPage() {
     trackedCount,
     recentJobRuns,
     settingsComplete,
+    openInventoryIssueCount,
   } = useLoaderData<typeof loader>();
 
   const received = orderCounts.received ?? 0;
@@ -113,6 +123,17 @@ export default function DashboardPage() {
         </s-banner>
       )}
 
+      {openInventoryIssueCount > 0 && (
+        <s-banner heading="Inventory sync needs attention" tone="critical">
+          <s-paragraph>
+            {openInventoryIssueCount} open inventory sync issue
+            {openInventoryIssueCount === 1 ? "" : "s"}. Review them on the{" "}
+            <s-link href="/app/inventory/sync-log">Inventory sync log</s-link>{" "}
+            page.
+          </s-paragraph>
+        </s-banner>
+      )}
+
       <s-section heading="Recent worker runs">
         {recentJobRuns.length === 0 ? (
           <s-paragraph tone="neutral" color="subdued">
@@ -155,6 +176,9 @@ export default function DashboardPage() {
           </s-list-item>
           <s-list-item>
             <s-link href="/app/inventory">Inventory sync</s-link>
+          </s-list-item>
+          <s-list-item>
+            <s-link href="/app/inventory/sync-log">Inventory sync log</s-link>
           </s-list-item>
           <s-list-item>
             <s-link href="/app/orders">KornitX orders</s-link>

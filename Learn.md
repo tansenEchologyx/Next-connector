@@ -95,7 +95,9 @@ Prisma turns `schema.prisma` into TypeScript types and SQL tables.
 | `AppSettings` | One row per shop: KornitX Ref ID, B2B customer, inventory location, primary toggle, daily full-feed enable/time/`lastDailyFullFeedAt` |
 | `TrackedProduct` | Products you checkbox for inventory sync (EAN/barcode) — saved from `/app/inventory` |
 | `InventorySyncState` | Legacy per-tracked-product sync flags (from inventory UI) |
-| `InventoryDelta` | One row per shop+EAN with latest qty; `status = unsent` until a future sync worker sends it |
+| `InventoryDelta` | One row per shop+EAN with latest qty; `status = unsent` until a sync worker sends it |
+| `InventorySyncRun` | One row per inventory send attempt (delta or full feed): status, EAN counts, error, next retry |
+| `InventorySyncIssue` | Open shop-scoped inventory sync warnings/errors (resolved on successful send) |
 | `KornitxOrder` | One row per KornitX batch order (`kornitxId` unique); stores `shopifyFulfillmentStatus` from Shopify webhooks |
 | `KornitxOrderItem` | Line items inside a KornitX order |
 | `ShippingStatusEvent` | “Tell KornitX this line shipped/cancelled” queue — unique per `(shopifyOrderId, shopifyLineItemId, status)`; only `sent: false` rows go to KornitX |
@@ -153,11 +155,12 @@ Navigation is defined in `app/routes/app.tsx` (`<s-app-nav>` links).
 
 - Order counts grouped by status (`getOrderStatusCounts`)
 - How many tracked variants are enabled
-- How many `InventorySyncState` rows have `needsSync = true`
+- How many unsent `InventoryDelta` rows (`countUnsentInventoryDeltas`)
+- How many open `InventorySyncIssue` rows (`countOpenInventorySyncIssues`)
 - Last 5 `JobRun` rows
 - Whether required settings are filled in
 
-**UI:** Metric boxes, setup/failure banners, recent worker run table.
+**UI:** Metric boxes, setup/failure banners (including **Inventory sync needs attention** when open inventory issues exist, linking to `/app/inventory/sync-log`), recent worker run table.
 
 ---
 
@@ -180,7 +183,7 @@ Navigation is defined in `app/routes/app.tsx` (`<s-app-nav>` links).
 | B2B customer | `b2bCustomerId` | **Yes** — `run-jobs` → Shopify `orderCreate` |
 | Pre-emptive order prefix | `preemptiveOrderPrefix` | **Yes** — classifies `OrderExternalRef`; tags `next-live` / `next-preemptive` |
 | Require prefix | `requirePreemptivePrefix` | **Yes** — when on, missing prefix permanently fails order creation |
-| Inventory delta interval (minutes) | `deltaIntervalMinutes` | **Yes** — cadence for sending unsent stock deltas to KornitX (default 30) |
+| Inventory delta interval (minutes) | `deltaIntervalMinutes` | **Yes** — cadence for sending unsent stock deltas to KornitX (default 30; decimals allowed, e.g. `0.5`) |
 | Inventory location | `inventoryLocationId` | **Yes** — Inventory page qty + daily full feed (ignored when primary toggle is on) |
 | Use primary location | `usePrimaryInventoryLocation` | **Yes** — use Shopify primary location instead of the dropdown |
 | Enable daily full feed | `dailyFullFeedEnabled` | **Yes** — master toggle for once-per-day full feed |
@@ -189,7 +192,7 @@ Navigation is defined in `app/routes/app.tsx` (`<s-app-nav>` links).
 
 **Next Label Plus orders section:** optional 2-letter pre-emptive prefix + “Require prefix” checkbox (default off). Missing B2B customer / required prefix fails order creation immediately (ERROR issue, no auto-retry); merchant clicks **Retry** after fixing. Shipping address is **not** configured here — if the B2B customer has a Shopify default address it is used on `orderCreate`; otherwise the order is created without one.
 
-**Inventory sync section:** set **Inventory delta interval** in minutes (default 30; used instead of any `.env` cadence). Choose a location **or** enable **Use primary location** (default off). Selecting a location automatically turns off the primary toggle. Optionally enable **daily full inventory feed** and set a UK time (no default) — validation requires time + a resolvable location when the feed is on. Inventory delta permanently fails (no backoff) when location is unset (and Use primary off) or Ref ID / API key is missing; full feed also does not run when disabled or no time is set.
+**Inventory sync section:** set **Inventory delta interval** in minutes (default 30; decimals allowed, e.g. `0.5` = 30 seconds; used instead of any `.env` cadence). Choose a location **or** enable **Use primary location** (default off). Selecting a location automatically turns off the primary toggle. Optionally enable **daily full inventory feed** and set a UK time (no default) — validation requires time + a resolvable location when the feed is on. Inventory delta permanently fails (no backoff) when location is unset (and Use primary off) or Ref ID / API key is missing; full feed also does not run when disabled or no time is set.
 
 **Inbound webhook section:** shows the full KornitX webhook URL built from `SHOPIFY_APP_URL`. Auth is configured in **`.env`** only. Inventory delta and daily full feed run via **`npm run worker:run-jobs`**.
 
@@ -312,7 +315,7 @@ For quick local testing without curl, run `npm run simulate:kornitx-orders`. It 
 
 **Story:** Merchant checks which variants send stock to KornitX. Only variants **with a barcode (EAN)** appear. Both **available and unavailable** (out-of-stock) items are listed.
 
-**Layout:** `s-page` with `inlineSize="large"` (full width). Filter card + table card match the Orders page pattern. “How it works” sits in the main column below the table (no aside).
+**Layout:** `s-page` with `inlineSize="large"` (full width). **Products / Sync log** tabs (`InventorySectionTabs`) switch between product selection and the sync log. Filter card + table card match the Orders page pattern. “How it works” sits in the main column below the table (no aside).
 
 **Location:** Stock is read from the effective inventory location:
 
@@ -347,6 +350,27 @@ The loader still fetches **all** barcoded variants from Shopify on enter/reload 
 2. `syncTrackedProducts(shop, selectedVariants)` — upserts `TrackedProduct`, toggles `enabled`, creates `InventorySyncState` if missing
 3. After save, loader re-runs; draft `selected` syncs from the new `trackedVariantIds`, and sort order updates
 
+---
+
+### `/app/inventory/sync-log` — Inventory sync log (`app/routes/app.inventory_.sync-log.tsx`)
+
+**Story:** Merchant reviews every inventory send attempt to KornitX (delta or daily full feed), sees success/fail badges, and opens the issue indicator for error text and next retry time — same pattern as Orders issues.
+
+**Layout:** Same Inventory page heading with **Products / Sync log** tabs. Filter card + table card match Orders.
+
+**Loader:** `listInventorySyncRuns(shop, filters)` — paginated `InventorySyncRun` rows for the shop, plus open `InventorySyncIssue` rows attached to the latest problematic run per sync type.
+
+**Columns:** Issue indicator, Type (Delta / Full feed), Status badge, Started (UK time), EANs attempted, EANs marked sent, Next retry.
+
+**Statuses:** `success`, `partial`, `failed`, `deferred`, `skipped`. Auto-retry uses **failed** + Next retry column (no separate retrying status). Terminal failure keeps **failed** with Next retry empty.
+
+**Filters (URL params):** `type` (`all` / `delta` / `full_feed`), `status`, `sort` (`newest` default / `oldest`), `page`, `pageSize` (10 / 25 / 50).
+
+**Issue popover:** Shows ERROR/WARNING badge + message (retry ordinal + UK datetime when auto-retry is pending) + issue created time. Open issues also drive the Dashboard banner.
+
+**Header:** Refresh revalidates the loader.
+
+**Written by workers:** `recordInventorySyncOutcome` in `workers/lib/inventory-sync-observability.ts`, called from `send-inventory-delta-job.ts` and `send-inventory-full-feed-job.ts` on every meaningful outcome.
 **Helper files:**
 
 - `app/models/tracked-products.server.ts`
@@ -499,10 +523,10 @@ Webhooks enqueue rows; `run-jobs` claims and processes them.
 2. `reclaimStaleSyncJobs()` — reset jobs stuck in `processing` > 15 min
 3. Loop: `claimNextDueSyncJob()` → `dispatchSyncJob()` until no due jobs
 4. Priority: `process_order` → `send_fulfillment` → `send_inventory_delta` → `send_inventory_full_feed`
-5. **`send_inventory_delta`:** skips until `lastInventorySyncAt + Settings.deltaIntervalMinutes`; PUTs unsent `InventoryDelta` rows in batches of 100. After each successful batch, rows in that batch are marked `sent` only if snapshot `quantity` and `updatedAt` still match. `lastInventorySyncAt` advances when any batch succeeds. If a later batch fails, earlier batches stay marked sent and leftovers retry at the next interval (not exponential backoff). Total failure on the first batch still uses retry backoff. Qty **0** is sent when stock drops to zero.
-6. **`send_inventory_full_feed`:** enqueued when Settings has daily full feed enabled and today's UK scheduled time has passed (and not yet successfully run today). Fetches live qty for every enabled `TrackedProduct` at the effective location and PUTs all EANs (including **0** for out of stock). Partial failure stores remaining EANs and retries with exponential backoff.
-6. **`send_fulfillment`:** skips until `orderReceivedAt + FULFILLMENT_DELAY_SECONDS` (default 20 min); loads all **unsent** `ShippingStatusEvent` rows for the order and sends one PUT (batched: `PUT /order-item/status` with that item array). Later partial fulfillments only add new unsent events, so previously sent ItemIDs are never re-sent. On retryable failure, upserts a WARNING issue; on terminal failure, upserts an ERROR issue. Success resolves fulfillment issues. **`process_order`** failures (retryable or terminal) upsert an **ERROR** issue and expose manual **Retry**.
-7. Writes `JobRun` metadata per cycle
+5. **`send_inventory_delta`:** skips until `lastInventorySyncAt + Settings.deltaIntervalMinutes`; PUTs unsent `InventoryDelta` rows in batches of 100. After each successful batch, rows in that batch are marked `sent` only if snapshot `quantity` and `updatedAt` still match. `lastInventorySyncAt` advances when any batch succeeds. If a later batch fails, earlier batches stay marked sent and leftovers retry at the next interval (not exponential backoff). Total failure on the first batch still uses retry backoff. Qty **0** is sent when stock drops to zero. Every outcome records an **`InventorySyncRun`**; failures/partials upsert **`InventorySyncIssue`** (visible on `/app/inventory/sync-log`).
+6. **`send_inventory_full_feed`:** enqueued when Settings has daily full feed enabled and today's UK scheduled time has passed (and not yet successfully run today). Fetches live qty for every enabled `TrackedProduct` at the effective location and PUTs all EANs (including **0** for out of stock). Partial failure stores remaining EANs and retries with exponential backoff. Same run/issue observability as delta.
+7. **`send_fulfillment`:** skips until `orderReceivedAt + FULFILLMENT_DELAY_SECONDS` (default 20 min); loads all **unsent** `ShippingStatusEvent` rows for the order and sends one PUT (batched: `PUT /order-item/status` with that item array). Later partial fulfillments only add new unsent events, so previously sent ItemIDs are never re-sent. On retryable failure, upserts a WARNING issue; on terminal failure, upserts an ERROR issue. Success resolves fulfillment issues. **`process_order`** failures (retryable or terminal) upsert an **ERROR** issue and expose manual **Retry**.
+8. Writes `JobRun` metadata per cycle
 
 **Run locally (runs until Ctrl+C):**
 
@@ -534,7 +558,7 @@ Optional `.env`: `WORKER_POLL_INTERVAL_MS=300000` (5 min default).
 
 **Mid-run race:** the handler snapshots unsent rows, sends them in batches of 100, and marks each batch's rows `sent` only if `quantity` and `updatedAt` are unchanged. Example: snapshot has qty 10, webhook updates to 15 during the run → KornitX gets 10, row stays `unsent` with 15, corrected on the next interval run (~30 min later).
 
-**Partial batch failure:** if batch 1 succeeds and batch 2 fails, batch 1 rows are already marked `sent`, `lastInventorySyncAt` is updated, and batch 2 rows retry at the next interval — batch 1 is not resent. If the first batch fails, nothing is marked sent and normal exponential backoff applies.
+**Partial batch failure:** if batch 1 succeeds and batch 2 fails, batch 1 rows are already marked `sent`, `lastInventorySyncAt` is updated, and batch 2 rows retry at the next interval — batch 1 is not resent. The worker also writes a **partial** `InventorySyncRun` (new historical row) and an open WARNING `InventorySyncIssue` with the next interval retry time. If the first batch fails, nothing is marked sent and normal exponential backoff applies (**failed** run updated in place + ERROR issue with next retry time; success later flips that same row).
 
 ---
 

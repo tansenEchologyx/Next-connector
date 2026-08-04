@@ -38,7 +38,7 @@ model AppSettings {
   id                          Int       @id @default(autoincrement())
   shop                        String    @unique
   kornitxRefId                String    @default("")
-  deltaIntervalMinutes        Int       @default(30)
+  deltaIntervalMinutes        Float     @default(30)
   inventoryLocationId         String    @default("")
   usePrimaryInventoryLocation Boolean   @default(false)
   dailyFullFeedEnabled        Boolean   @default(false)
@@ -194,6 +194,40 @@ model InventoryDelta {
 
   @@unique([shop, ean])
   @@index([shop, status])
+}
+
+// --- Inventory sync observability (admin Sync log) ---
+
+model InventorySyncRun {
+  id             Int       @id @default(autoincrement())
+  shop           String
+  syncType       String    // delta | full_feed
+  status         String    // success | partial | failed | deferred | skipped
+  eansAttempted  Int       @default(0)
+  eansMarkedSent Int       @default(0)
+  skippedRace    Int       @default(0)
+  errorMessage   String?
+  nextRetryAt    DateTime?
+  syncJobId      Int?
+  startedAt      DateTime  @default(now())
+  finishedAt     DateTime?
+  metadata       Json?
+
+  @@index([shop, startedAt])
+  @@index([shop, syncType, status])
+}
+
+model InventorySyncIssue {
+  id         Int       @id @default(autoincrement())
+  shop       String
+  syncType   String    // delta | full_feed
+  type       String    // error | warning
+  message    String
+  createdAt  DateTime  @default(now())
+  resolvedAt DateTime?
+
+  @@index([shop, resolvedAt])
+  @@index([shop, syncType, resolvedAt])
 }
 
 // --- Worker observability ---

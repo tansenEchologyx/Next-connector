@@ -10,8 +10,7 @@ export function getInventoryDeltaIntervalMinutes(
   if (
     typeof minutes !== "number" ||
     !Number.isFinite(minutes) ||
-    minutes < 1 ||
-    !Number.isInteger(minutes)
+    minutes <= 0
   ) {
     return DEFAULT_INVENTORY_DELTA_INTERVAL_MINUTES;
   }

@@ -37,6 +37,7 @@ import {
   sortInventoryVariantsWithTrackedFirst,
 } from "../../shared/inventory-list-filters";
 import { InventoryFilters } from "../components/inventory/inventory-filters";
+import { InventorySectionTabs } from "../components/inventory/inventory-section-tabs";
 import styles from "../components/inventory/inventory-page.module.css";
 import { authenticate } from "../shopify.server";
 
@@ -326,17 +327,19 @@ export default function InventoryPage() {
 
   return (
     <s-page heading="Inventory sync" inlineSize="large">
-      <Form method="post">
-        {[...selected].map((variantId) => (
-          <input
-            key={variantId}
-            type="hidden"
-            name="variantIds"
-            value={variantId}
-          />
-        ))}
+      <div className={styles.page}>
+        <InventorySectionTabs active="products" />
 
-        <div className={styles.page}>
+        <Form method="post" className={styles.productsForm}>
+          {[...selected].map((variantId) => (
+            <input
+              key={variantId}
+              type="hidden"
+              name="variantIds"
+              value={variantId}
+            />
+          ))}
+
           <div className={styles.toolbar}>
             <div className={styles.toolbarLocation}>
               {locationLabel ? (
@@ -545,8 +548,8 @@ export default function InventoryPage() {
               </s-unordered-list>
             </s-stack>
           </s-box>
-        </div>
-      </Form>
+        </Form>
+      </div>
     </s-page>
   );
 }

@@ -94,14 +94,14 @@ export const action = async ({ request }: ActionFunctionArgs) => {
   );
 
   if (
-    !Number.isInteger(deltaIntervalMinutes) ||
-    deltaIntervalMinutes < 1 ||
+    !Number.isFinite(deltaIntervalMinutes) ||
+    deltaIntervalMinutes <= 0 ||
     deltaIntervalMinutes > 1440
   ) {
     return {
       ok: false as const,
       error:
-        "Inventory delta interval must be a whole number of minutes between 1 and 1440.",
+        "Inventory delta interval must be a number of minutes greater than 0 and at most 1440 (e.g. 0.5 for 30 seconds).",
     };
   }
 
@@ -316,7 +316,7 @@ export default function SettingsPage() {
                 onChange={(event) =>
                   setDeltaIntervalMinutes(readPolarisValue(event))
                 }
-                details="How often unsent stock changes are sent to KornitX (default 30). Lower during peak if Next accepts the frequency and Shopify rate limits allow it."
+                details="How often unsent stock changes are sent to KornitX (default 30). Decimals allowed (e.g. 0.5 = 30 seconds). Lower during peak if Next accepts the frequency and Shopify rate limits allow it."
               />
               <s-checkbox
                 checked={usePrimaryInventoryLocation}

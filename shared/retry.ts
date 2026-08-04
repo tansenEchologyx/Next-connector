@@ -10,6 +10,13 @@ const RETRY_DEFAULTS = {
   jitterRatio: 0.2,
 };
 
+// const RETRY_DEFAULTS = {
+//   baseMs: 5_000,        // 5 seconds (was 5 * 60_000)
+//   maxMs: 60_000,        // 60 seconds cap (was 6 hours)
+//   maxAttempts: 8,
+//   jitterRatio: 0.2,
+// };
+
 export function getDefaultMaxAttempts(): number {
   return RETRY_DEFAULTS.maxAttempts;
 }
