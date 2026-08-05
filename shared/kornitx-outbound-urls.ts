@@ -18,24 +18,15 @@ export function getKornitxStockUrl(): string {
 }
 
 /**
- * When set, all shipping status calls use this single URL (mock/testing).
- * Mock: https://next-connector.free.beeceptor.com/shipment
- *
- * When unset, {@link getKornitxOrderStatusBaseUrl} is used with KornitX path rules.
+ * Base URL for KornitX shipping APIs (single + batched paths).
+ * Mock: https://next-connector.free.beeceptor.com
+ *   → PUT /order/:id/status
+ *   → PUT /order-item/status
+ * Prod:  https://api-sl-2-2.custom-gateway.net
  */
-export function getKornitxShippingUrl(): string | null {
-  const url = process.env.KORNITX_SHIPPING_URL?.trim();
-  return url || null;
-}
-
-/** Base URL for real KornitX shipping APIs (single + batched paths). */
 export function getKornitxOrderStatusBaseUrl(): string {
   return (
     process.env.KORNITX_ORDER_STATUS_BASE_URL?.trim() ||
     KORNITX_PRODUCTION_ORDER_STATUS_BASE_URL
   ).replace(/\/$/, "");
-}
-
-export function usesUnifiedShippingEndpoint(): boolean {
-  return getKornitxShippingUrl() !== null;
 }

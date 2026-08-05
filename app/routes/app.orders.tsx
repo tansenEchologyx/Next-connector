@@ -173,7 +173,11 @@ export default function OrdersPage() {
 
   return (
     <s-page heading="Orders" inlineSize="large">
-      <s-button slot="secondary-action" variant="secondary" onClick={refreshList}>
+      <s-button
+        slot="secondary-actions"
+        variant="secondary"
+        onClick={refreshList}
+      >
         Refresh
       </s-button>
 
@@ -256,7 +260,7 @@ export default function OrdersPage() {
                           <OrderRowActions
                             orderId={order.id}
                             kornitxId={order.kornitxId}
-                            status={order.status}
+                            canRetryOrderCreation={order.canRetryOrderCreation}
                             canResendFulfillment={order.canResendFulfillment}
                             isSubmitting={isSubmitting}
                             onRequestConfirm={handleRequestConfirm}

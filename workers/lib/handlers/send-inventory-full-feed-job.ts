@@ -1,14 +1,23 @@
 import type { Prisma, SyncJob } from "@prisma/client";
 
 import { getOfflineAccessToken } from "../../../app/services/shopify-offline.server";
+import { isConfigurationError } from "../../../shared/configuration-error";
 import { resolveEffectiveInventoryLocation } from "../../../shared/inventory-location";
+import { INVENTORY_SYNC_TYPES } from "../../../shared/inventory-sync-log";
 import type { SendInventoryFullFeedJobPayload } from "../../../shared/sync-job-types";
-import { loadAppSettings } from "../app-settings";
+import {
+  assertInventoryOutboundSettings,
+  loadAppSettings,
+} from "../app-settings";
 import {
   MAX_EANS_PER_BATCH,
   sendStockAvailabilityBatchToKornitx,
   type StockAvailabilityRow,
 } from "../kornitx-stock";
+import {
+  INVENTORY_SYNC_RUN_STATUSES,
+  recordInventorySyncOutcome,
+} from "../inventory-sync-observability";
 import { prisma } from "../prisma";
 import {
   fetchPrimaryLocationOffline,
@@ -65,7 +74,81 @@ async function markDailyFullFeedComplete(shop: string, at: Date) {
   });
 }
 
+async function recordFullFeedFailure(
+  job: SyncJob,
+  error: unknown,
+  startedAt: Date,
+  stats?: {
+    eansAttempted?: number;
+    eansMarkedSent?: number;
+    remainingCount?: number;
+    partialBatchFailure?: boolean;
+  },
+) {
+  const result = await failSyncJobWithBackoff(job, error);
+  const message = result.message;
+  const isConfig = isConfigurationError(error);
+  const forceCreate = job.attemptCount === 0;
+
+  if (result.terminal) {
+    await recordInventorySyncOutcome({
+      shop: job.shop,
+      syncType: INVENTORY_SYNC_TYPES.FULL_FEED,
+      status: INVENTORY_SYNC_RUN_STATUSES.FAILED,
+      eansAttempted: stats?.eansAttempted ?? 0,
+      eansMarkedSent: stats?.eansMarkedSent ?? 0,
+      errorMessage: message,
+      nextRetryAt: null,
+      syncJobId: job.id,
+      startedAt,
+      forceCreate,
+      metadata: stats?.remainingCount
+        ? { remainingCount: stats.remainingCount }
+        : undefined,
+      issue: { kind: "terminal", isConfigError: isConfig },
+    });
+  } else {
+    await recordInventorySyncOutcome({
+      shop: job.shop,
+      syncType: INVENTORY_SYNC_TYPES.FULL_FEED,
+      status: stats?.partialBatchFailure
+        ? INVENTORY_SYNC_RUN_STATUSES.PARTIAL
+        : INVENTORY_SYNC_RUN_STATUSES.FAILED,
+      eansAttempted: stats?.eansAttempted ?? 0,
+      eansMarkedSent: stats?.eansMarkedSent ?? 0,
+      errorMessage: message,
+      nextRetryAt: result.nextRunAt,
+      syncJobId: job.id,
+      startedAt,
+      forceCreate,
+      metadata: stats?.remainingCount
+        ? { remainingCount: stats.remainingCount }
+        : undefined,
+      issue: stats?.partialBatchFailure
+        ? {
+            kind: "partial",
+            nextRunAt: result.nextRunAt,
+          }
+        : {
+            kind: "retry",
+            attemptCount: result.attemptCount,
+            nextRunAt: result.nextRunAt,
+          },
+    });
+  }
+
+  return {
+    outcome: "error" as const,
+    message,
+    terminal: result.terminal,
+    partialBatchFailure: stats?.partialBatchFailure ?? false,
+    sentCount: stats?.eansMarkedSent ?? 0,
+    remainingCount: stats?.remainingCount,
+  };
+}
+
 export async function handleSendInventoryFullFeedJob(job: SyncJob) {
+  const startedAt = new Date();
   const settings = await loadAppSettings(job.shop);
 
   if (!settings?.dailyFullFeedEnabled) {
@@ -73,6 +156,16 @@ export async function handleSendInventoryFullFeedJob(job: SyncJob) {
     console.log(
       `[run-jobs] Full feed job ${job.id} for ${job.shop}: daily full feed disabled — completing`,
     );
+
+    await recordInventorySyncOutcome({
+      shop: job.shop,
+      syncType: INVENTORY_SYNC_TYPES.FULL_FEED,
+      status: INVENTORY_SYNC_RUN_STATUSES.SKIPPED,
+      syncJobId: job.id,
+      startedAt,
+      metadata: { reason: "daily_full_feed_disabled" },
+    });
+
     return { outcome: "nothing_to_send" as const };
   }
 
@@ -89,6 +182,17 @@ export async function handleSendInventoryFullFeedJob(job: SyncJob) {
     console.log(
       `[run-jobs] Full feed job ${job.id} for ${job.shop}: no tracked products — marked complete for today`,
     );
+
+    await recordInventorySyncOutcome({
+      shop: job.shop,
+      syncType: INVENTORY_SYNC_TYPES.FULL_FEED,
+      status: INVENTORY_SYNC_RUN_STATUSES.SKIPPED,
+      syncJobId: job.id,
+      startedAt,
+      metadata: { reason: "no_tracked_products" },
+      issue: { kind: "resolve" },
+    });
+
     return { outcome: "nothing_to_send" as const, sentCount: 0 };
   }
 
@@ -107,7 +211,26 @@ export async function handleSendInventoryFullFeedJob(job: SyncJob) {
     console.log(
       `[run-jobs] Full feed job ${job.id} for ${job.shop}: no remaining EANs — marked complete`,
     );
+
+    await recordInventorySyncOutcome({
+      shop: job.shop,
+      syncType: INVENTORY_SYNC_TYPES.FULL_FEED,
+      status: INVENTORY_SYNC_RUN_STATUSES.SKIPPED,
+      syncJobId: job.id,
+      startedAt,
+      metadata: { reason: "no_remaining_eans" },
+      issue: { kind: "resolve" },
+    });
+
     return { outcome: "nothing_to_send" as const, sentCount: 0 };
+  }
+
+  try {
+    assertInventoryOutboundSettings(settings);
+  } catch (error) {
+    return recordFullFeedFailure(job, error, startedAt, {
+      eansAttempted: trackedForRun.length,
+    });
   }
 
   try {
@@ -136,9 +259,7 @@ export async function handleSendInventoryFullFeedJob(job: SyncJob) {
         await sendStockAvailabilityBatchToKornitx(settings, batch);
       } catch (batchError) {
         if (batchesSent > 0) {
-          const remainingEans = stockRows
-            .slice(index)
-            .map((row) => row.ean);
+          const remainingEans = stockRows.slice(index).map((row) => row.ean);
 
           await prisma.syncJob.update({
             where: { id: job.id },
@@ -147,20 +268,16 @@ export async function handleSendInventoryFullFeedJob(job: SyncJob) {
             },
           });
 
-          await failSyncJobWithBackoff(job, batchError);
           console.log(
             `[run-jobs] Full feed job ${job.id} for ${job.shop}: partial batch failure after ${rowsSent} EAN(s). Remaining: ${remainingEans.length}. Retry with backoff.`,
           );
-          return {
-            outcome: "error" as const,
-            message:
-              batchError instanceof Error
-                ? batchError.message
-                : String(batchError),
-            partialBatchFailure: true,
-            sentCount: rowsSent,
+
+          return recordFullFeedFailure(job, batchError, startedAt, {
+            eansAttempted: stockRows.length,
+            eansMarkedSent: rowsSent,
             remainingCount: remainingEans.length,
-          };
+            partialBatchFailure: true,
+          });
         }
 
         throw batchError;
@@ -181,15 +298,27 @@ export async function handleSendInventoryFullFeedJob(job: SyncJob) {
       `[run-jobs] Full feed job ${job.id} for ${job.shop}: sent ${rowsSent} tracked EAN(s) to KornitX`,
     );
 
+    await recordInventorySyncOutcome({
+      shop: job.shop,
+      syncType: INVENTORY_SYNC_TYPES.FULL_FEED,
+      status: INVENTORY_SYNC_RUN_STATUSES.SUCCESS,
+      eansAttempted: rowsSent,
+      eansMarkedSent: rowsSent,
+      errorMessage: null,
+      nextRetryAt: null,
+      syncJobId: job.id,
+      startedAt,
+      forceCreate: job.attemptCount === 0,
+      issue: { kind: "resolve" },
+    });
+
     return {
       outcome: "synced" as const,
       sentCount: rowsSent,
     };
   } catch (error) {
-    await failSyncJobWithBackoff(job, error);
-    return {
-      outcome: "error" as const,
-      message: error instanceof Error ? error.message : String(error),
-    };
+    return recordFullFeedFailure(job, error, startedAt, {
+      eansAttempted: trackedForRun.length,
+    });
   }
 }

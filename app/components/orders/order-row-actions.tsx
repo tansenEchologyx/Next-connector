@@ -3,7 +3,7 @@ import type { OrderConfirmAction, OrderConfirmIntent } from "./order-action-conf
 type OrderRowActionsProps = {
   orderId: number;
   kornitxId: string;
-  status: string;
+  canRetryOrderCreation: boolean;
   canResendFulfillment: boolean;
   isSubmitting: boolean;
   onRequestConfirm: (action: OrderConfirmAction) => void;
@@ -12,7 +12,7 @@ type OrderRowActionsProps = {
 export function OrderRowActions({
   orderId,
   kornitxId,
-  status,
+  canRetryOrderCreation,
   canResendFulfillment,
   isSubmitting,
   onRequestConfirm,
@@ -21,13 +21,13 @@ export function OrderRowActions({
     onRequestConfirm({ intent, orderId, kornitxId });
   };
 
-  if (status !== "failed" && !canResendFulfillment) {
+  if (!canRetryOrderCreation && !canResendFulfillment) {
     return <s-text color="subdued">—</s-text>;
   }
 
   return (
     <s-stack direction="inline" gap="small">
-      {status === "failed" && (
+      {canRetryOrderCreation && (
         <s-button
           type="button"
           variant="tertiary"

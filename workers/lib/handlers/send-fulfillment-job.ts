@@ -6,14 +6,22 @@ import {
   resolveOrderIssuesBySource,
   upsertOpenOrderIssue,
 } from "../../../app/models/kornitx-order-issues.server";
-import { buildFulfillmentSendRetryWarningMessage } from "../../../shared/order-processing-issues";
+import { isConfigurationError } from "../../../shared/configuration-error";
+import {
+  buildFulfillmentConfigFailureMessage,
+  buildFulfillmentSendRetryWarningMessage,
+} from "../../../shared/order-processing-issues";
+import { refreshOrderSendFulfillmentStatus } from "../../../app/models/order-send-fulfillment-status.server";
 import { enqueueSendFulfillmentJobIfNeeded } from "../../../app/models/sync-jobs.server";
 import type { SendFulfillmentJobPayload } from "../../../shared/sync-job-types";
 import {
   computeFulfillmentRunAfter,
   isFulfillmentSendDue,
 } from "../../../shared/fulfillment-sync";
-import { loadAppSettings } from "../app-settings";
+import {
+  assertKornitxCredentials,
+  loadAppSettings,
+} from "../app-settings";
 import { sendShippingStatusesToKornitx } from "../kornitx-shipping";
 import { prisma } from "../prisma";
 import {
@@ -82,12 +90,14 @@ export async function handleSendFulfillmentJob(job: SyncJob) {
       `[run-jobs] Fulfillment job ${job.id} for order ${order.kornitxId}: no unsent shipping events — completing without calling KornitX`,
     );
     await completeSyncJob(job.id);
+    await refreshOrderSendFulfillmentStatus(order.id);
     return { outcome: "nothing_to_send" as const };
   }
 
   const settings = await loadAppSettings(job.shop);
 
   try {
+    assertKornitxCredentials(settings);
     await sendShippingStatusesToKornitx(settings, order, unsent);
 
     const now = new Date();
@@ -111,6 +121,8 @@ export async function handleSendFulfillmentJob(job: SyncJob) {
         order.kornitxId,
         order.orderReceivedAt,
       );
+    } else {
+      await refreshOrderSendFulfillmentStatus(order.id);
     }
 
     console.log(
@@ -131,7 +143,9 @@ export async function handleSendFulfillmentJob(job: SyncJob) {
         order.id,
         ISSUE_TYPES.ERROR,
         ISSUE_SOURCES.FULFILLMENT_SEND,
-        `Fulfillment status could not be sent to KornitX: ${message}`,
+        isConfigurationError(error)
+          ? buildFulfillmentConfigFailureMessage(message)
+          : `Fulfillment status could not be sent to KornitX: ${message}`,
       );
     } else {
       await upsertOpenOrderIssue(
@@ -145,6 +159,8 @@ export async function handleSendFulfillmentJob(job: SyncJob) {
         ),
       );
     }
+
+    await refreshOrderSendFulfillmentStatus(order.id);
 
     return {
       outcome: "error" as const,

@@ -38,7 +38,7 @@ model AppSettings {
   id                          Int       @id @default(autoincrement())
   shop                        String    @unique
   kornitxRefId                String    @default("")
-  deltaIntervalMinutes        Int       @default(30)
+  deltaIntervalMinutes        Float     @default(30)
   inventoryLocationId         String    @default("")
   usePrimaryInventoryLocation Boolean   @default(false)
   dailyFullFeedEnabled        Boolean   @default(false)
@@ -46,8 +46,10 @@ model AppSettings {
   lastDailyFullFeedAt         DateTime?
   b2bCustomerId               String    @default("")
   defaultShippingAddress      Json      @default("{}")
+  useCustomerShippingAddress  Boolean   @default(false)
   inboundAuthType             String    @default("basic")
   preemptiveOrderPrefix       String?
+  requirePreemptivePrefix     Boolean   @default(false)
   lastInventorySyncAt         DateTime?
   createdAt                   DateTime  @default(now())
   updatedAt                   DateTime  @updatedAt
@@ -56,30 +58,18 @@ model AppSettings {
 // --- Inventory tracking (checkbox list in admin UI) ---
 
 model TrackedProduct {
-  id                 Int                 @id @default(autoincrement())
-  shop               String
-  variantId          String
-  ean                String
-  sku                String?
-  productTitle       String
-  enabled            Boolean             @default(true)
-  inventorySyncState InventorySyncState?
-  createdAt          DateTime            @default(now())
-  updatedAt          DateTime            @updatedAt
+  id           Int      @id @default(autoincrement())
+  shop         String
+  variantId    String
+  ean          String
+  sku          String?
+  productTitle String
+  enabled      Boolean  @default(true)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
 
   @@unique([shop, variantId])
   @@index([shop, enabled])
-}
-
-model InventorySyncState {
-  id               Int            @id @default(autoincrement())
-  trackedProductId Int            @unique
-  trackedProduct   TrackedProduct @relation(fields: [trackedProductId], references: [id], onDelete: Cascade)
-  pendingQuantity  Int            @default(0)
-  lastSentQuantity Int?
-  lastChangedAt    DateTime       @default(now())
-  lastSentAt       DateTime?
-  needsSync        Boolean        @default(false)
 }
 
 // --- KornitX orders ---
@@ -95,6 +85,9 @@ model KornitxOrder {
   status           String                @default("received") // received | processing | created | failed
   shopifyOrderId   String?
   shopifyOrderName String?
+  shopifyFulfillmentStatus String? // unfulfilled | partial | fulfilled | cancelled (from Shopify)
+  // Denormalized from ShippingStatusEvent + send_fulfillment SyncJob for list filters
+  sendFulfillmentStatus String @default("none") // none | unsent | sent | failed
   orderReceivedAt  DateTime              @default(now())
   failureReason    String?
   items            KornitxOrderItem[]
@@ -105,6 +98,7 @@ model KornitxOrder {
 
   @@index([status])
   @@index([orderReceivedAt])
+  @@index([sendFulfillmentStatus])
 }
 
 model KornitxOrderIssue {
@@ -193,16 +187,36 @@ model InventoryDelta {
   @@index([shop, status])
 }
 
-// --- Worker observability ---
+// --- Inventory sync observability (admin Sync log) ---
 
-model JobRun {
+model InventorySyncRun {
+  id             Int       @id @default(autoincrement())
+  shop           String
+  syncType       String    // delta | full_feed
+  status         String    // success | partial | failed | deferred | skipped
+  eansAttempted  Int       @default(0)
+  eansMarkedSent Int       @default(0)
+  skippedRace    Int       @default(0)
+  errorMessage   String?
+  nextRetryAt    DateTime?
+  syncJobId      Int?
+  startedAt      DateTime  @default(now())
+  finishedAt     DateTime?
+  metadata       Json?
+
+  @@index([shop, startedAt])
+  @@index([shop, syncType, status])
+}
+
+model InventorySyncIssue {
   id         Int       @id @default(autoincrement())
-  jobName    String
-  status     String    // running | completed | failed
-  startedAt  DateTime  @default(now())
-  finishedAt DateTime?
-  error      String?
-  metadata   Json?
+  shop       String
+  syncType   String    // delta | full_feed
+  type       String    // error | warning
+  message    String
+  createdAt  DateTime  @default(now())
+  resolvedAt DateTime?
 
-  @@index([jobName, startedAt])
+  @@index([shop, resolvedAt])
+  @@index([shop, syncType, resolvedAt])
 }
