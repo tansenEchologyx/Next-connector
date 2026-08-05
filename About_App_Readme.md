@@ -2,7 +2,7 @@
 
 Documentation of **features built so far** in the Next Connector Shopify app (KornitX / Next Label Plus integration).
 
-_Last updated: Denormalized `sendFulfillmentStatus` on KornitxOrder for indexed Orders list filters._
+_Last updated: Amplify SSR build config (`amplify.yml` + Vite Amplify hosting plugin)._
 
 ---
 
@@ -117,11 +117,21 @@ Optional `.env`: `WORKER_SHOP`, `WORKER_POLL_INTERVAL_MS`, `FULFILLMENT_DELAY_SE
 
 - `.env.example` — database, Shopify, KornitX, webhook auth, worker poll interval
 - `shopify.app.toml` — app scopes and Shopify webhook subscriptions
+- `amplify.yml` — AWS Amplify SSR build (Node 22, Prisma generate/migrate, bake env into compute)
+- `vite.config.ts` — includes `vite-plugin-react-router-amplify-hosting` so `npm run build` emits `.amplify-hosting/`
+
+### 9. Amplify SSR hosting (web app + webhooks)
+
+- Amplify Hosting deploys the embedded admin UI and all webhooks (Shopify + KornitX inbound)
+- Production env vars are set in Amplify Console and baked into SSR compute at build time (see `amplify.yml`)
+- Inbound webhook auth vars: `KORNITX_WEBHOOK_BASIC_*` and/or `KORNITX_WEBHOOK_OAUTH_TOKEN`
+- Background workers (`npm run worker:*`) are **not** run on Amplify — they need a separate host (e.g. ECS) later
 
 ---
 
 ## Not built yet
 
-- Amplify / ECS deployment
+- ECS / EventBridge worker deployment
+- Production Shopify app URL wired in `shopify.app.toml` (set after Amplify domain exists)
 
 See `.cursor/plans/kornitx_connector_final_59011c58.plan.md` for the full roadmap.

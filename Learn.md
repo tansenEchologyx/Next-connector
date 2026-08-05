@@ -2,7 +2,7 @@
 
 A beginner-friendly guide to **how the code works today**. Read this to understand files, functions, data, and flows.
 
-_Last updated: Shopify admin top loading bar on navigation and saves._
+_Last updated: Amplify SSR build config (`amplify.yml` + Vite Amplify hosting plugin)._
 
 ---
 
@@ -78,7 +78,9 @@ next-connector/
 │       ├── create-shopify-order.ts
 │       └── process-kornitx-order.ts
 ├── prisma/
-│   └── schema.prisma       ← Database table definitions
+│   └── schema.prisma       ← Database table definitions (includes Linux Prisma binaryTargets for Amplify)
+├── amplify.yml             ← AWS Amplify SSR build + Prisma + env bake for compute
+├── vite.config.ts          ← React Router + Amplify hosting plugin (emits `.amplify-hosting/`)
 ├── docker-compose.yml      ← Starts local PostgreSQL
 ├── .env                    ← Secrets (not in git) — copy from .env.example
 └── package.json            ← npm scripts including worker:* and db:*
@@ -601,6 +603,34 @@ DATABASE_URL="postgresql://next_connector:next_connector@localhost:5433/next_con
 | `KORNITX_ORDER_STATUS_BASE_URL` | Workers | Shipping API host (mock Beeceptor or production). Paths: `/order/:id/status` (single) and `/order-item/status` (batched) |
 
 See `.env.example` — mock defaults use [Beeceptor](https://next-connector.free.beeceptor.com).
+
+---
+
+## Amplify SSR deployment (web app + webhooks)
+
+**What runs on Amplify:** the Shopify embedded admin UI and all webhook routes (including `POST /webhooks/kornitx/orders`). Amplify does **not** run `npm run worker:*` — workers still need a separate host later (ECS).
+
+**How the build works:**
+
+1. `amplify.yml` installs Node 22, runs `npm ci --include=dev`, then `npx prisma generate`
+2. `npm run build` uses `vite-plugin-react-router-amplify-hosting` to emit `.amplify-hosting/` (SSR compute + static assets)
+3. Build copies Prisma engine files into the compute bundle and bakes selected Amplify Console env vars into `.amplify-hosting/compute/default/.env`
+4. `npx prisma migrate deploy` applies migrations against `DATABASE_URL` during the build
+
+**Amplify Console env vars (web / webhook runtime):**
+
+| Variable | Purpose |
+|----------|---------|
+| `DATABASE_URL` | Neon (or other) PostgreSQL |
+| `SHOPIFY_API_KEY` / `SHOPIFY_API_SECRET` / `SCOPES` | Shopify app auth |
+| `SHOPIFY_APP_URL` | Public HTTPS URL (set after Amplify domain exists) |
+| `NODE_ENV` | `production` |
+| `KORNITX_WEBHOOK_BASIC_USER` / `KORNITX_WEBHOOK_BASIC_PASSWORD` | Inbound Basic auth (typical for UAT) |
+| `KORNITX_WEBHOOK_OAUTH_TOKEN` | Optional Bearer alternative |
+
+After changing Amplify env vars, **redeploy** so they are baked into the compute `.env` again.
+
+**Local note:** `.amplify-hosting/` is gitignored (build artifact only).
 
 ---
 

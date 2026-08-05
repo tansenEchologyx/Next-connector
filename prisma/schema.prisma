@@ -2,7 +2,9 @@
 // Local dev: PostgreSQL via Docker (see docker-compose.yml)
 
 generator client {
-  provider = "prisma-client-js"
+  provider      = "prisma-client-js"
+  // native = local/dev; debian-openssl-3.0.x = Amplify SSR Linux compute
+  binaryTargets = ["native", "debian-openssl-3.0.x"]
 }
 
 datasource db {
