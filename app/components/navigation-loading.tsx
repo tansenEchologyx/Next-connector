@@ -2,7 +2,7 @@ import { useEffect, useLayoutEffect, useRef } from "react";
 import { useNavigation } from "react-router";
 import { useAppBridge } from "@shopify/app-bridge-react";
 
-/** Keep the bar visible briefly so fast loaders (Dashboard/Orders) still register. */
+/** Keep the bar visible briefly so fast loaders (Orders/Inventory) still register. */
 const MIN_VISIBLE_MS = 250;
 
 /**

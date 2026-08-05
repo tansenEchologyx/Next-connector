@@ -1,6 +1,5 @@
 import { loadEnv } from "./lib/load-env";
 import { disconnectPrisma } from "./lib/prisma";
-import { completeJobRun, failJobRun, startJobRun } from "./lib/job-run";
 import { enqueueDailyFullFeedJobsIfDue } from "../app/models/sync-jobs.server";
 
 loadEnv();
@@ -10,17 +9,11 @@ loadEnv();
  * Actual sending is handled by `npm run worker:run-jobs`.
  */
 async function main() {
-  const jobRun = await startJobRun("stock-full-feed");
-
   try {
     const enqueued = await enqueueDailyFullFeedJobsIfDue();
-    await completeJobRun(jobRun.id, { enqueued });
     console.log(
       `[stock-full-feed] Enqueued ${enqueued} daily full-feed job(s). Processing runs via worker:run-jobs.`,
     );
-  } catch (err) {
-    await failJobRun(jobRun.id, err);
-    throw err;
   } finally {
     await disconnectPrisma();
   }

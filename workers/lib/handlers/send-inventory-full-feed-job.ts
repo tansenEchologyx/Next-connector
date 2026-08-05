@@ -88,6 +88,7 @@ async function recordFullFeedFailure(
   const result = await failSyncJobWithBackoff(job, error);
   const message = result.message;
   const isConfig = isConfigurationError(error);
+  const forceCreate = job.attemptCount === 0;
 
   if (result.terminal) {
     await recordInventorySyncOutcome({
@@ -100,6 +101,7 @@ async function recordFullFeedFailure(
       nextRetryAt: null,
       syncJobId: job.id,
       startedAt,
+      forceCreate,
       metadata: stats?.remainingCount
         ? { remainingCount: stats.remainingCount }
         : undefined,
@@ -118,6 +120,7 @@ async function recordFullFeedFailure(
       nextRetryAt: result.nextRunAt,
       syncJobId: job.id,
       startedAt,
+      forceCreate,
       metadata: stats?.remainingCount
         ? { remainingCount: stats.remainingCount }
         : undefined,
@@ -305,6 +308,7 @@ export async function handleSendInventoryFullFeedJob(job: SyncJob) {
       nextRetryAt: null,
       syncJobId: job.id,
       startedAt,
+      forceCreate: job.attemptCount === 0,
       issue: { kind: "resolve" },
     });
 

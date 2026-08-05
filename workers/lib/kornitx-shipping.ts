@@ -7,11 +7,7 @@ import {
   loadKornitxApiCredentials,
   parseKornitxHttpResponse,
 } from "../../shared/kornitx-credentials";
-import {
-  getKornitxOrderStatusBaseUrl,
-  getKornitxShippingUrl,
-  usesUnifiedShippingEndpoint,
-} from "../../shared/kornitx-outbound-urls";
+import { getKornitxOrderStatusBaseUrl } from "../../shared/kornitx-outbound-urls";
 
 function shippingStatusCode(
   orderShape: string,
@@ -31,56 +27,25 @@ function numericKornitxItemId(itemId: string): number {
   return numericItemId;
 }
 
-async function sendUnifiedShippingPayload(
+/**
+ * Sends shipping status using the KornitX Shipping API shapes from the
+ * Chinti & Parker Label Plus integration doc:
+ * - single → PUT /order/:id/status with { status: 8 | 128 }
+ * - batched → PUT /order-item/status with [{ id, data: { status: 3 | 7 } }]
+ */
+export async function sendShippingStatusesToKornitx(
   settings: AppSettings | null,
   order: KornitxOrder,
   events: ShippingStatusEvent[],
 ): Promise<void> {
-  const url = getKornitxShippingUrl();
-  if (!url) {
-    throw new Error("KORNITX_SHIPPING_URL is not configured");
+  if (events.length === 0) return;
+
+  if (order.orderShape === "single" && events.length !== 1) {
+    throw new Error(
+      `Single-item KornitX order ${order.kornitxId} expected one shipping event, got ${events.length}`,
+    );
   }
 
-  const { refId, apiKey } = loadKornitxApiCredentials(settings);
-
-  const body =
-    order.orderShape === "single"
-      ? {
-          orderShape: order.orderShape,
-          kornitxOrderId: order.kornitxId,
-          shopifyOrderId: events[0]?.shopifyOrderId,
-          eventStatus: events[0]?.status,
-          status: shippingStatusCode(order.orderShape, events[0]?.status ?? ""),
-        }
-      : {
-          orderShape: order.orderShape,
-          kornitxOrderId: order.kornitxId,
-          shopifyOrderId: events[0]?.shopifyOrderId,
-          items: events.map((event) => ({
-            id: event.kornitxItemId,
-            data: {
-              status: shippingStatusCode(order.orderShape, event.status),
-            },
-          })),
-        };
-
-  const response = await fetch(url, {
-    method: "PUT",
-    headers: {
-      Authorization: kornitxBasicAuthHeader(refId, apiKey),
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify(body),
-  });
-
-  await parseKornitxHttpResponse(response, "shipping");
-}
-
-async function sendProductionShippingStatus(
-  settings: AppSettings | null,
-  order: KornitxOrder,
-  events: ShippingStatusEvent[],
-): Promise<void> {
   const { refId, apiKey } = loadKornitxApiCredentials(settings);
   const baseUrl = getKornitxOrderStatusBaseUrl();
 
@@ -124,27 +89,6 @@ async function sendProductionShippingStatus(
     body: JSON.stringify(body),
   });
   await parseKornitxHttpResponse(response, "shipping");
-}
-
-export async function sendShippingStatusesToKornitx(
-  settings: AppSettings | null,
-  order: KornitxOrder,
-  events: ShippingStatusEvent[],
-): Promise<void> {
-  if (events.length === 0) return;
-
-  if (order.orderShape === "single" && events.length !== 1) {
-    throw new Error(
-      `Single-item KornitX order ${order.kornitxId} expected one shipping event, got ${events.length}`,
-    );
-  }
-
-  if (usesUnifiedShippingEndpoint()) {
-    await sendUnifiedShippingPayload(settings, order, events);
-    return;
-  }
-
-  await sendProductionShippingStatus(settings, order, events);
 }
 
 /** @deprecated Use sendShippingStatusesToKornitx for batched sends. */

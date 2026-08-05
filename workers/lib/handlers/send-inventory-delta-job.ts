@@ -70,6 +70,9 @@ async function recordDeltaFailure(
   const result = await failSyncJobWithBackoff(job, error);
   const message = result.message;
   const isConfig = isConfigurationError(error);
+  // attemptCount === 0 on the claimed job means this is the first failure of a
+  // fresh send cycle — always insert a new log row (do not reuse an old one).
+  const forceCreate = job.attemptCount === 0;
 
   if (result.terminal) {
     await recordInventorySyncOutcome({
@@ -81,6 +84,7 @@ async function recordDeltaFailure(
       nextRetryAt: null,
       syncJobId: job.id,
       startedAt,
+      forceCreate,
       issue: { kind: "terminal", isConfigError: isConfig },
     });
   } else {
@@ -93,6 +97,7 @@ async function recordDeltaFailure(
       nextRetryAt: result.nextRunAt,
       syncJobId: job.id,
       startedAt,
+      forceCreate,
       issue: {
         kind: "retry",
         attemptCount: result.attemptCount,
@@ -176,6 +181,8 @@ async function finalizeInventoryDeltaJob(
       nextRetryAt: null,
       syncJobId: job.id,
       startedAt,
+      // Fresh cycle (attemptCount 0) → new row; mid-backoff success updates the open failed row.
+      forceCreate: job.attemptCount === 0,
       metadata: { remainingUnsent: remaining },
       issue: { kind: "resolve" },
     });
@@ -233,6 +240,7 @@ export async function handleSendInventoryDeltaJob(job: SyncJob) {
       status: INVENTORY_SYNC_RUN_STATUSES.SKIPPED,
       syncJobId: job.id,
       startedAt,
+      forceCreate: job.attemptCount === 0,
       metadata: { reason: "no_unsent_deltas" },
       issue: { kind: "resolve" },
     });

@@ -3,6 +3,7 @@ import type { Prisma } from "@prisma/client";
 import {
   createInventorySyncIssue,
   upsertInventorySyncRun,
+  closeOpenLifecycleInventorySyncRuns,
   resolveInventorySyncIssuesByType,
   upsertOpenInventorySyncIssue,
   INVENTORY_SYNC_ISSUE_TYPES,
@@ -32,8 +33,9 @@ export type RecordInventorySyncOutcomeInput = {
   finishedAt?: Date | null;
   metadata?: Prisma.InputJsonValue | null;
   /**
-   * When true, always insert a new run (e.g. delta partial — closed history;
-   * next interval attempt is a separate row).
+   * When true, always insert a new run (fresh send cycle, or delta partial).
+   * Mid-backoff retries (SyncJob.attemptCount > 0) should leave this false
+   * so the open failed row is updated in place.
    */
   forceCreate?: boolean;
   /** When set, upserts or resolves open shop issues for this sync type. */
@@ -54,6 +56,11 @@ function syncLabel(syncType: InventorySyncType): string {
 export async function recordInventorySyncOutcome(
   input: RecordInventorySyncOutcomeInput,
 ) {
+  // Fresh cycles must not attach to a stale open row from an earlier cycle.
+  if (input.forceCreate && input.syncJobId != null) {
+    await closeOpenLifecycleInventorySyncRuns(input.syncJobId);
+  }
+
   const run = await upsertInventorySyncRun({
     shop: input.shop,
     syncType: input.syncType,

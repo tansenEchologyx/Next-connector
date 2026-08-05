@@ -46,9 +46,10 @@ next-connector/
 │   ├── models/             ← Database helpers for admin pages + inbound orders
 │   ├── services/           ← Shopify GraphQL, order parser, webhook auth
 │   └── routes/             ← Pages and webhooks
-│       ├── app._index.tsx           ← Dashboard
+│       ├── app._index.tsx           ← Redirects to Orders
 │       ├── app.settings.tsx         ← KornitX + order defaults
 │       ├── app.inventory.tsx        ← Tracked product checkboxes
+│       ├── app.inventory_.sync-log.tsx ← Inventory sync run history
 │       ├── app.orders.tsx           ← KornitX order log + retry
 │       ├── webhooks.kornitx.orders.tsx
 │       ├── webhooks.orders.fulfilled.tsx
@@ -64,13 +65,13 @@ next-connector/
 │   ├── uk-time.ts          ← Europe/London formatting + daily full-feed schedule
 │   └── fulfillment-sync.ts ← FULFILLMENT_DELAY_SECONDS
 ├── workers/                ← Background jobs (run separately)
-│   ├── run-jobs.ts         ← unified worker (process_order + send_fulfillment)
-│   ├── stock-delta.ts      ← legacy stub (inventory TBD)
-│   ├── stock-full-feed.ts
+│   ├── run-jobs.ts         ← unified worker (orders + fulfillment + inventory)
+│   ├── stock-full-feed.ts  ← one-shot enqueue daily full-feed SyncJobs
 │   ├── shipping-status.ts  ← legacy stub
 │   └── lib/
 │       ├── sync-jobs.ts            ← claim / complete / backoff
 │       ├── handlers/               ← per job type
+│       ├── inventory-sync-observability.ts
 │       ├── kornitx-shipping.ts     ← PUT dispatch/cancel to KornitX
 │       ├── shopify-session.ts
 │       ├── shopify-graphql.ts
@@ -94,15 +95,14 @@ Prisma turns `schema.prisma` into TypeScript types and SQL tables.
 | `Session` | Shopify login sessions (required by Shopify app template) |
 | `AppSettings` | One row per shop: KornitX Ref ID, B2B customer, inventory location, primary toggle, daily full-feed enable/time/`lastDailyFullFeedAt` |
 | `TrackedProduct` | Products you checkbox for inventory sync (EAN/barcode) — saved from `/app/inventory` |
-| `InventorySyncState` | Legacy per-tracked-product sync flags (from inventory UI) |
 | `InventoryDelta` | One row per shop+EAN with latest qty; `status = unsent` until a sync worker sends it |
 | `InventorySyncRun` | One row per inventory send attempt (delta or full feed): status, EAN counts, error, next retry |
 | `InventorySyncIssue` | Open shop-scoped inventory sync warnings/errors (resolved on successful send) |
 | `KornitxOrder` | One row per KornitX batch order (`kornitxId` unique); stores `shopifyFulfillmentStatus` from Shopify webhooks |
 | `KornitxOrderItem` | Line items inside a KornitX order |
+| `KornitxOrderIssue` | Active warnings/errors per order |
 | `ShippingStatusEvent` | “Tell KornitX this line shipped/cancelled” queue — unique per `(shopifyOrderId, shopifyLineItemId, status)`; only `sent: false` rows go to KornitX |
 | `SyncJob` | Work queue: `process_order`, `send_fulfillment`, `send_inventory_delta`, `send_inventory_full_feed`, with retry backoff |
-| `JobRun` | Log line every time a worker starts/finishes |
 
 ### Order status flow
 
@@ -147,20 +147,13 @@ When a merchant opens the app, `authenticate.admin(request)` checks they are log
 
 Navigation is defined in `app/routes/app.tsx` (`<s-app-nav>` links).
 
-**Loading bar:** `app/components/navigation-loading.tsx` mounts inside `AppProvider` and watches React Router’s `useNavigation()`. While `navigation.state` is not `idle` (route change, form submit/save, or GET filter navigation), it calls App Bridge `shopify.loading(true)` via `useLayoutEffect` (before paint) so the Shopify admin top progress bar shows for **every** app page change — including fast DB-only loaders like Dashboard and Orders. A short minimum visible time keeps the bar from vanishing before it can animate in; when idle (or on unmount), it calls `shopify.loading(false)`. Same path covers Inventory **Save selection** and Settings **Save**.
+**Loading bar:** `app/components/navigation-loading.tsx` mounts inside `AppProvider` and watches React Router’s `useNavigation()`. While `navigation.state` is not `idle` (route change, form submit/save, or GET filter navigation), it calls App Bridge `shopify.loading(true)` via `useLayoutEffect` (before paint) so the Shopify admin top progress bar shows for **every** app page change — including fast DB-only loaders like Orders. A short minimum visible time keeps the bar from vanishing before it can animate in; when idle (or on unmount), it calls `shopify.loading(false)`. Same path covers Inventory **Save selection** and Settings **Save**.
 
-### `/app` — Dashboard (`app/routes/app._index.tsx`)
+### `/app` — App home (`app/routes/app._index.tsx`)
 
-**Loader** loads:
+Authenticates the merchant, then **redirects to `/app/orders`** (preserving query string). Operational lists live on Orders and Inventory Sync log — there is no separate dashboard.
 
-- Order counts grouped by status (`getOrderStatusCounts`)
-- How many tracked variants are enabled
-- How many unsent `InventoryDelta` rows (`countUnsentInventoryDeltas`)
-- How many open `InventorySyncIssue` rows (`countOpenInventorySyncIssues`)
-- Last 5 `JobRun` rows
-- Whether required settings are filled in
-
-**UI:** Metric boxes, setup/failure banners (including **Inventory sync needs attention** when open inventory issues exist, linking to `/app/inventory/sync-log`), recent worker run table.
+Nav links (in `app.tsx`): **Orders**, **Inventory**, **Settings**.
 
 ---
 
@@ -198,7 +191,7 @@ Navigation is defined in `app/routes/app.tsx` (`<s-app-nav>` links).
 
 **Helper files:** `app/models/app-settings.server.ts`, `shared/uk-time.ts`, `shared/configuration-error.ts`, `workers/lib/resolve-shipping-address.ts`
 
-All merchant-facing timestamps (orders received date, retry messages, dashboard worker runs, last full feed) use **`Europe/London`** via `formatUkDateTime`.
+All merchant-facing timestamps (orders received date, retry messages, sync-log times, last full feed) use **`Europe/London`** via `formatUkDateTime`.
 
 ---
 
@@ -231,8 +224,10 @@ The webhook **does not** call Shopify. It enqueues a `process_order` SyncJob pro
 
 | Shape | When | OrderExternalRef location | Shipping API later |
 |-------|------|---------------------------|-------------------|
-| `single` | One item, ref on order | Order level | `PUT /order/:id/status` |
-| `batched` | Multiple items, or ref per item | Item level | `PUT /order-item/status` |
+| `single` | One item, ref on order | Order level | `PUT /order/:id/status` with `{ "status": 8 }` (dispatch) or `{ "status": 128 }` (cancel) |
+| `batched` | Multiple items, or ref per item | Item level | `PUT /order-item/status` with `[{ "id": <ItemID number>, "data": { "status": 3|7 } }]` (3 = dispatch, 7 = cancel) |
+
+Mock and production both use these doc shapes via `KORNITX_ORDER_STATUS_BASE_URL` (`workers/lib/kornitx-shipping.ts`). Batched `ItemID` values must be numeric.
 
 **Parser file:** `app/services/order.parser.ts`  
 **Auth file:** `app/services/kornitx-webhook-auth.server.ts`  
@@ -347,7 +342,7 @@ The loader still fetches **all** barcoded variants from Shopify on enter/reload 
 **Action:**
 
 1. Reads selected variant IDs from hidden form inputs
-2. `syncTrackedProducts(shop, selectedVariants)` — upserts `TrackedProduct`, toggles `enabled`, creates `InventorySyncState` if missing
+2. `syncTrackedProducts(shop, selectedVariants)` — upserts `TrackedProduct`, toggles `enabled`
 3. After save, loader re-runs; draft `selected` syncs from the new `trackedVariantIds`, and sort order updates
 
 ---
@@ -366,7 +361,7 @@ The loader still fetches **all** barcoded variants from Shopify on enter/reload 
 
 **Filters (URL params):** `type` (`all` / `delta` / `full_feed`), `status`, `sort` (`newest` default / `oldest`), `page`, `pageSize` (10 / 25 / 50).
 
-**Issue popover:** Shows ERROR/WARNING badge + message (retry ordinal + UK datetime when auto-retry is pending) + issue created time. Open issues also drive the Dashboard banner.
+**Issue popover:** Shows ERROR/WARNING badge + message (retry ordinal + UK datetime when auto-retry is pending) + issue created time.
 
 **Header:** Refresh revalidates the loader.
 
@@ -428,13 +423,7 @@ Shared Admin GraphQL helpers used by Settings and Inventory:
 
 Workers are **plain TypeScript files** executed with `tsx` (TypeScript runner).
 
-Each worker follows the same pattern:
-
-1. **loadEnv()** — read `.env` (gets `DATABASE_URL`)
-2. **startJobRun()** — insert `JobRun` with status `running`
-3. Do work (query/update tables)
-4. **completeJobRun()** or **failJobRun()**
-5. **disconnectPrisma()** — close DB connection and exit
+Long-running `run-jobs` polls forever; one-shot helpers load env, do work, then `disconnectPrisma()` and exit. Cycle stats are printed to the console (no separate worker-run table).
 
 ### npm scripts → files
 
@@ -442,7 +431,6 @@ Each worker follows the same pattern:
 |----------|------|
 | `npm run worker:run-jobs` | `workers/run-jobs.ts` (unified SyncJob worker) |
 | `npm run worker:process-orders` | Same as `worker:run-jobs` (alias) |
-| `npm run worker:stock-delta` | `workers/stock-delta.ts` (legacy stub) |
 | `npm run worker:stock-full-feed` | `workers/stock-full-feed.ts` |
 | `npm run worker:shipping-status` | `workers/shipping-status.ts` (legacy stub) |
 
@@ -463,20 +451,6 @@ Loads variables from `.env` in the project root. Workers do not use Shopify CLI,
 **Exports:** `prisma`, `disconnectPrisma()`
 
 Same idea as `app/db.server.ts` but for workers running in a separate process.
-
----
-
-### `workers/lib/job-run.ts`
-
-**Functions:**
-
-| Function | What it does |
-|----------|--------------|
-| `startJobRun(jobName)` | Creates `JobRun` row, status `running` |
-| `completeJobRun(id, metadata?)` | Sets status `completed`, saves JSON stats |
-| `failJobRun(id, error)` | Sets status `failed`, saves error message |
-
-**Variable `jobName`:** `run-jobs` (unified worker), plus legacy names for stub workers.
 
 ---
 
@@ -526,7 +500,7 @@ Webhooks enqueue rows; `run-jobs` claims and processes them.
 5. **`send_inventory_delta`:** skips until `lastInventorySyncAt + Settings.deltaIntervalMinutes`; PUTs unsent `InventoryDelta` rows in batches of 100. After each successful batch, rows in that batch are marked `sent` only if snapshot `quantity` and `updatedAt` still match. `lastInventorySyncAt` advances when any batch succeeds. If a later batch fails, earlier batches stay marked sent and leftovers retry at the next interval (not exponential backoff). Total failure on the first batch still uses retry backoff. Qty **0** is sent when stock drops to zero. Every outcome records an **`InventorySyncRun`**; failures/partials upsert **`InventorySyncIssue`** (visible on `/app/inventory/sync-log`).
 6. **`send_inventory_full_feed`:** enqueued when Settings has daily full feed enabled and today's UK scheduled time has passed (and not yet successfully run today). Fetches live qty for every enabled `TrackedProduct` at the effective location and PUTs all EANs (including **0** for out of stock). Partial failure stores remaining EANs and retries with exponential backoff. Same run/issue observability as delta.
 7. **`send_fulfillment`:** skips until `orderReceivedAt + FULFILLMENT_DELAY_SECONDS` (default 20 min); loads all **unsent** `ShippingStatusEvent` rows for the order and sends one PUT (batched: `PUT /order-item/status` with that item array). Later partial fulfillments only add new unsent events, so previously sent ItemIDs are never re-sent. On retryable failure, upserts a WARNING issue; on terminal failure, upserts an ERROR issue. Success resolves fulfillment issues. **`process_order`** failures (retryable or terminal) upsert an **ERROR** issue and expose manual **Retry**.
-8. Writes `JobRun` metadata per cycle
+8. Logs cycle stats to the console
 
 **Run locally (runs until Ctrl+C):**
 
@@ -548,9 +522,7 @@ Optional `.env`: `WORKER_POLL_INTERVAL_MS=300000` (5 min default).
 
 ---
 
-### `worker:stock-delta`
-
-**File:** `workers/stock-delta.ts`
+### Inventory delta sync (via `run-jobs`)
 
 **Story:** Inventory changed on a tracked SKU. The **`inventory_levels/update`** webhook upserts **`InventoryDelta`** (`status = unsent`) and enqueues one coalesced **`send_inventory_delta`** SyncJob per shop (if none pending/processing).
 
@@ -622,8 +594,7 @@ DATABASE_URL="postgresql://next_connector:next_connector@localhost:5433/next_con
 | `KORNITX_REF_ID` | Workers | KornitX account code (or `mock-ref` for Beeceptor) |
 | `KORNITX_API_KEY` | Workers | KornitX API key (or `mock-key` for Beeceptor) |
 | `KORNITX_STOCK_URL` | Workers | Full URL for inventory PUT (mock or production stock API) |
-| `KORNITX_SHIPPING_URL` | Workers | Mock: single shipment URL; production: leave unset |
-| `KORNITX_ORDER_STATUS_BASE_URL` | Workers | Production shipping host when `KORNITX_SHIPPING_URL` is unset |
+| `KORNITX_ORDER_STATUS_BASE_URL` | Workers | Shipping API host (mock Beeceptor or production). Paths: `/order/:id/status` (single) and `/order-item/status` (batched) |
 
 See `.env.example` — mock defaults use [Beeceptor](https://next-connector.free.beeceptor.com).
 
@@ -636,7 +607,7 @@ See `.env.example` — mock defaults use [Beeceptor](https://next-connector.free
 | KornitX POST | Unique `kornitxId` on `KornitxOrder`; duplicate POST returns 200 | **Implemented** |
 | Fulfillment webhook | Unique `(shopifyOrderId, shopifyLineItemId, status)` on `ShippingStatusEvent`; only unsent events are PUT to KornitX; one coalesced `send_fulfillment` SyncJob per order | **Implemented** |
 | Manual order Retry + auto-retry | One `process_order:{kornitxId}` SyncJob (`idempotencyKey` unique); manual Retry upserts that row instead of inserting another; skips reset while `processing` | **Implemented** |
-| Inventory webhook | Upsert `InventorySyncState` by tracked product (latest qty wins) | Planned |
+| Inventory webhook | Upsert `InventoryDelta` by shop+EAN; enqueue coalesced `send_inventory_delta` | Done |
 
 ---
 

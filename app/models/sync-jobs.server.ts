@@ -1,6 +1,7 @@
 import type { Prisma } from "@prisma/client";
 
 import prisma from "../db.server";
+import { closeOpenLifecycleInventorySyncRuns } from "./inventory-sync-issues.server";
 import { computeFulfillmentRunAfter } from "../../shared/fulfillment-sync";
 import { computeInventoryRunAfter } from "../../shared/inventory-sync";
 import {
@@ -175,6 +176,10 @@ export async function enqueueSendInventoryDeltaJobIfNeeded(shop: string) {
       },
     });
   }
+
+  // Re-queueing a completed/failed job starts a new send cycle — do not let a
+  // stale open sync-log row absorb the next attempt via update-in-place.
+  await closeOpenLifecycleInventorySyncRuns(existing.id);
 
   return prisma.syncJob.update({
     where: { id: existing.id },

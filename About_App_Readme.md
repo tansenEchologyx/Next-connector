@@ -2,7 +2,7 @@
 
 Documentation of **features built so far** in the Next Connector Shopify app (KornitX / Next Label Plus integration).
 
-_Last updated: Inventory Sync Log page — run-level history, issue indicators, and dashboard banner for open inventory sync issues._
+_Last updated: Removed JobRun / Dashboard / legacy InventorySyncState — operational UI is Orders + Inventory Sync log._
 
 ---
 
@@ -35,7 +35,6 @@ This file lists only what is **implemented today**.
   - **Session** — Shopify OAuth sessions
   - **AppSettings** — per-shop settings including inventory location, primary-location toggle, **inventory delta interval minutes**, daily full-feed schedule (UK time), `lastDailyFullFeedAt`, `lastInventorySyncAt`, `preemptiveOrderPrefix`, and `requirePreemptivePrefix`
   - **TrackedProduct** — products selected for inventory sync
-  - **InventorySyncState** — legacy per-product sync state (from inventory UI)
   - **InventoryDelta** — unsent inventory changes per EAN (from inventory webhook)
   - **InventorySyncRun** — append-only history of each delta / full-feed send attempt (status, EAN counts, error, next retry)
   - **InventorySyncIssue** — open shop-scoped warnings/errors for inventory sync (delta or full feed); retry messages include next retry time
@@ -43,7 +42,6 @@ This file lists only what is **implemented today**.
   - **KornitxOrderIssue** — active warnings/errors per order (order processing, fulfillment send); retryable failures surface as warnings with the next retry time
   - **ShippingStatusEvent** — fulfillment events queued for KornitX
   - **SyncJob** — unified work queue (`process_order`, `send_fulfillment`, `send_inventory_delta`, `send_inventory_full_feed`)
-  - **JobRun** — log of each worker poll cycle
 
 ### 3. Admin UI (Polaris Web Components)
 
@@ -51,11 +49,11 @@ This file lists only what is **implemented today**.
 
 | Route | Purpose |
 |-------|---------|
-| `/app` | Dashboard — order counts, unsent inventory deltas, open inventory sync issues banner, recent worker runs, setup warnings |
-| `/app/settings` | Full-width page — KornitX Ref ID, B2B customer, **Next Label Plus orders** (pre-emptive prefix + require toggle), **Inventory sync** (delta interval minutes, location, use-primary toggle, daily full-feed enable + UK time), inbound webhook URL |
+| `/app` | Redirects to `/app/orders` |
+| `/app/orders` | Full-width paginated KornitX order list — times in **UK timezone**; search/filters (including Shopify fulfillment status), issues, **Retry** on any order-creation failure (auto-retry pending or exhausted), fulfillment Resend |
 | `/app/inventory` | Full-width paginated product table with checkboxes — **all shop barcoded variants**; qty/availability at configured location; search + availability + tracking filters; page size 10/25/50; optional **Show tracked first** (default off; reorder after Save when on); **header checkbox** selects/deselects the full catalog; draft selection persists across search/filter/pagination until Save or leaving the page; **Products / Sync log** tabs |
 | `/app/inventory/sync-log` | Inventory sync run history — update-in-place for backoff retries (Failed + Next retry); terminal Failed clears Next retry; delta partial is a separate historical row; status badges (success / partial / failed / deferred / skipped); issue popover; filters by type/status/sort |
-| `/app/orders` | Full-width paginated KornitX order list — times in **UK timezone**; search/filters (including Shopify fulfillment status), issues, **Retry** on any order-creation failure (auto-retry pending or exhausted), fulfillment Resend |
+| `/app/settings` | Full-width page — KornitX Ref ID, B2B customer, **Next Label Plus orders** (pre-emptive prefix + require toggle), **Inventory sync** (delta interval minutes, location, use-primary toggle, daily full-feed enable + UK time), inbound webhook URL |
 
 ### 4. Webhooks
 
@@ -86,21 +84,21 @@ KornitX inbound auth is configured in `.env` (`KORNITX_WEBHOOK_BASIC_*` or `KORN
    - **`send_inventory_full_feed`** — once per UK day (when enabled): GraphQL-fetch live qty for **all** enabled `TrackedProduct` rows at the effective location, PUT to KornitX in batches of 100. Every tracked EAN is included; out-of-stock items send **`quantity_available: 0`** (never omitted). Failures use exponential backoff; partial batch failure stores remaining EANs in the job payload for retry. Same run/issue observability as delta.
 6. Marks each job **`processing`** while in flight (safe for multiple worker instances later)
 7. Retryable errors use exponential backoff on the SyncJob (`nextRunAt`, up to 8 attempts). Order-creation failures also show a manual **Retry** button while backoff is running and after attempts are exhausted — Retry **upserts** the same `process_order` job (no duplicate queue rows; skips reset if already `processing`). **Configuration errors** (missing B2B customer, required prefix when required, inventory location, Ref ID, API key) fail **immediately** with no backoff — order/fulfillment need a manual Retry/Resend; inventory jobs self-heal on the next cycle after settings are fixed
-8. Writes a **JobRun** summary per cycle
+
+Cycle stats are logged to the worker console only (no `JobRun` table).
 
 **Before order processing:** B2B customer in `/app/settings`. Optional: pre-emptive prefix (required only when “Require prefix” is on). KornitX **EAN = Shopify variant barcode**. Created Shopify orders use name `NXT-{kornitxId}` and tags `NXTLabel`, `NXT-`, plus `next-live` / `next-preemptive` from the prefix (for Torque filtering vs web orders). If the B2B customer has a default Shopify address it is attached; otherwise the order is created without a shipping address.
 
 **Before outbound KornitX calls:** KornitX Ref ID in Settings + `KORNITX_API_KEY` in `.env`. Inventory delta/full feed also need a configured inventory location (selected or Use primary).
 
-Optional `.env`: `WORKER_SHOP`, `WORKER_POLL_INTERVAL_MS`, `FULFILLMENT_DELAY_SECONDS` (default `1200` = 20 min), `KORNITX_STOCK_URL`, `KORNITX_SHIPPING_URL`, `KORNITX_ORDER_STATUS_BASE_URL`. Inventory delta interval is set in **Settings** (`deltaIntervalMinutes`, default 30).
+Optional `.env`: `WORKER_SHOP`, `WORKER_POLL_INTERVAL_MS`, `FULFILLMENT_DELAY_SECONDS` (default `1200` = 20 min), `KORNITX_STOCK_URL`, `KORNITX_ORDER_STATUS_BASE_URL`. Inventory delta interval is set in **Settings** (`deltaIntervalMinutes`, default 30).
 
-**Local mock (Beeceptor):** set `KORNITX_STOCK_URL` and `KORNITX_SHIPPING_URL` in `.env`. **Production:** use real stock URL, clear `KORNITX_SHIPPING_URL`, set `KORNITX_ORDER_STATUS_BASE_URL`.
+**Local mock (Beeceptor):** set `KORNITX_STOCK_URL` and `KORNITX_ORDER_STATUS_BASE_URL` (Beeceptor host) in `.env`. Shipping uses doc paths: `PUT /order/:id/status` (single `{ status: 8|128 }`) and `PUT /order-item/status` (batched `[{ id, data: { status: 3|7 } }]`). **Production:** use real stock URL and `KORNITX_ORDER_STATUS_BASE_URL=https://api-sl-2-2.custom-gateway.net`.
 
 ### 6. Legacy CLI workers (stubs)
 
 | Command | Purpose |
 |---------|---------|
-| `npm run worker:stock-delta` | Superseded by `run-jobs` |
 | `npm run worker:stock-full-feed` | One-shot: enqueue due daily full-feed SyncJobs (sending still via `run-jobs`) |
 | `npm run worker:shipping-status` | Superseded by `run-jobs` |
 

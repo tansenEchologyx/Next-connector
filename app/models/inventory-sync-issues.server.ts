@@ -72,12 +72,6 @@ export async function resolveAllInventorySyncIssues(shop: string) {
   });
 }
 
-export async function countOpenInventorySyncIssues(shop: string) {
-  return prisma.inventorySyncIssue.count({
-    where: { shop, resolvedAt: null },
-  });
-}
-
 export async function listOpenInventorySyncIssues(shop: string) {
   return prisma.inventorySyncIssue.findMany({
     where: { shop, resolvedAt: null },
@@ -124,6 +118,29 @@ export async function findOpenLifecycleInventorySyncRun(syncJobId: number) {
       ],
     },
     orderBy: { startedAt: "desc" },
+  });
+}
+
+/** Clear nextRetryAt on open lifecycle rows so a new send cycle cannot reuse them. */
+export async function closeOpenLifecycleInventorySyncRuns(syncJobId: number) {
+  await prisma.inventorySyncRun.updateMany({
+    where: {
+      syncJobId,
+      OR: [
+        {
+          status: "failed",
+          nextRetryAt: { not: null },
+        },
+        { status: "deferred" },
+        { status: "retrying" },
+        {
+          status: "partial",
+          nextRetryAt: { not: null },
+          syncType: "full_feed",
+        },
+      ],
+    },
+    data: { nextRetryAt: null },
   });
 }
 

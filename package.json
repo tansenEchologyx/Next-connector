@@ -20,7 +20,6 @@
     "db:studio": "prisma studio",
     "worker:run-jobs": "tsx workers/run-jobs.ts",
     "worker:process-orders": "tsx workers/run-jobs.ts",
-    "worker:stock-delta": "tsx workers/stock-delta.ts",
     "worker:stock-full-feed": "tsx workers/stock-full-feed.ts",
     "worker:shipping-status": "tsx workers/shipping-status.ts",
     "simulate:kornitx-orders": "tsx scripts/simulate-kornitx-orders.ts",

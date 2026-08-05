@@ -2,7 +2,6 @@ import { loadEnv } from "./lib/load-env";
 import { disconnectPrisma } from "./lib/prisma";
 import { backfillProcessOrderJobs } from "./lib/backfill-jobs";
 import { dispatchSyncJob } from "./lib/dispatch-sync-job";
-import { completeJobRun, failJobRun, startJobRun } from "./lib/job-run";
 import {
   claimNextDueSyncJob,
   reclaimStaleSyncJobs,
@@ -76,37 +75,30 @@ function recordOutcome(stats: CycleStats, result: Awaited<ReturnType<typeof disp
 
 async function runCycle(): Promise<CycleStats> {
   const stats = emptyStats();
-  const jobRun = await startJobRun("run-jobs");
 
-  try {
-    stats.backfilled = await backfillProcessOrderJobs();
-    stats.fullFeedEnqueued = await enqueueDailyFullFeedJobsIfDue();
-    stats.reclaimed = await reclaimStaleSyncJobs();
+  stats.backfilled = await backfillProcessOrderJobs();
+  stats.fullFeedEnqueued = await enqueueDailyFullFeedJobsIfDue();
+  stats.reclaimed = await reclaimStaleSyncJobs();
 
-    while (true) {
-      const job = await claimNextDueSyncJob();
-      if (!job) break;
+  while (true) {
+    const job = await claimNextDueSyncJob();
+    if (!job) break;
 
-      stats.processed += 1;
+    stats.processed += 1;
 
-      try {
-        const result = await dispatchSyncJob(job);
-        recordOutcome(stats, result);
-      } catch (error) {
-        stats.errors += 1;
-        console.error(`[run-jobs] Unhandled error on sync job ${job.id}:`, error);
-      }
+    try {
+      const result = await dispatchSyncJob(job);
+      recordOutcome(stats, result);
+    } catch (error) {
+      stats.errors += 1;
+      console.error(`[run-jobs] Unhandled error on sync job ${job.id}:`, error);
     }
-
-    await completeJobRun(jobRun.id, stats);
-    console.log(
-      `[run-jobs] Cycle done. backfilled=${stats.backfilled} fullFeedEnqueued=${stats.fullFeedEnqueued} reclaimed=${stats.reclaimed} processed=${stats.processed} completed=${stats.completed} retryScheduled=${stats.retryScheduled} deferred=${stats.deferred} failed=${stats.failed} errors=${stats.errors}`,
-    );
-    return stats;
-  } catch (err) {
-    await failJobRun(jobRun.id, err);
-    throw err;
   }
+
+  console.log(
+    `[run-jobs] Cycle done. backfilled=${stats.backfilled} fullFeedEnqueued=${stats.fullFeedEnqueued} reclaimed=${stats.reclaimed} processed=${stats.processed} completed=${stats.completed} retryScheduled=${stats.retryScheduled} deferred=${stats.deferred} failed=${stats.failed} errors=${stats.errors}`,
+  );
+  return stats;
 }
 
 let shuttingDown = false;

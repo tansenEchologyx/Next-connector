@@ -54,17 +54,6 @@ export async function syncTrackedProducts(
           enabled: true,
         },
       });
-
-      await tx.inventorySyncState.upsert({
-        where: { trackedProductId: tracked.id },
-        create: {
-          trackedProductId: tracked.id,
-          pendingQuantity: 0,
-          lastChangedAt: new Date(),
-          needsSync: false,
-        },
-        update: {},
-      });
     }
   });
 }

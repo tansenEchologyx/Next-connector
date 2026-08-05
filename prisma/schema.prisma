@@ -58,30 +58,18 @@ model AppSettings {
 // --- Inventory tracking (checkbox list in admin UI) ---
 
 model TrackedProduct {
-  id                 Int                 @id @default(autoincrement())
-  shop               String
-  variantId          String
-  ean                String
-  sku                String?
-  productTitle       String
-  enabled            Boolean             @default(true)
-  inventorySyncState InventorySyncState?
-  createdAt          DateTime            @default(now())
-  updatedAt          DateTime            @updatedAt
+  id           Int      @id @default(autoincrement())
+  shop         String
+  variantId    String
+  ean          String
+  sku          String?
+  productTitle String
+  enabled      Boolean  @default(true)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
 
   @@unique([shop, variantId])
   @@index([shop, enabled])
-}
-
-model InventorySyncState {
-  id               Int            @id @default(autoincrement())
-  trackedProductId Int            @unique
-  trackedProduct   TrackedProduct @relation(fields: [trackedProductId], references: [id], onDelete: Cascade)
-  pendingQuantity  Int            @default(0)
-  lastSentQuantity Int?
-  lastChangedAt    DateTime       @default(now())
-  lastSentAt       DateTime?
-  needsSync        Boolean        @default(false)
 }
 
 // --- KornitX orders ---
@@ -228,18 +216,4 @@ model InventorySyncIssue {
 
   @@index([shop, resolvedAt])
   @@index([shop, syncType, resolvedAt])
-}
-
-// --- Worker observability ---
-
-model JobRun {
-  id         Int       @id @default(autoincrement())
-  jobName    String
-  status     String    // running | completed | failed
-  startedAt  DateTime  @default(now())
-  finishedAt DateTime?
-  error      String?
-  metadata   Json?
-
-  @@index([jobName, startedAt])
 }

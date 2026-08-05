@@ -288,17 +288,6 @@ export async function resendFulfillmentForOrder(shop: string, orderId: number) {
   return order;
 }
 
-export async function getOrderStatusCounts() {
-  const groups = await prisma.kornitxOrder.groupBy({
-    by: ["status"],
-    _count: { status: true },
-  });
-
-  return Object.fromEntries(
-    groups.map((group) => [group.status, group._count.status]),
-  ) as Record<string, number>;
-}
-
 export function parseOrderListFilters(
   searchParams: URLSearchParams,
 ): OrderListFilters {

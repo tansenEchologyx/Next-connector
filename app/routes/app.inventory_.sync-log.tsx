@@ -102,11 +102,11 @@ export default function InventorySyncLogPage() {
           <div className={styles.tableWrap}>
             <s-table variant="auto" loading={isLoading}>
               <s-table-header-row>
-                <s-table-header />
+                  <s-table-header />
                 <s-table-header listSlot="primary">Type</s-table-header>
                 <s-table-header>Status</s-table-header>
                 <s-table-header>Started</s-table-header>
-                {/* <s-table-header>EANs attempted</s-table-header> */}
+                <s-table-header>EANs attempted</s-table-header>
                 <s-table-header>EANs marked sent</s-table-header>
                 <s-table-header>Next retry</s-table-header>
               </s-table-header-row>
@@ -160,7 +160,7 @@ export default function InventorySyncLogPage() {
                       <s-table-cell>
                         {formatSyncRunDate(run.startedAt)}
                       </s-table-cell>
-                      {/* <s-table-cell>{run.eansAttempted}</s-table-cell> */}
+                      <s-table-cell>{run.eansAttempted}</s-table-cell>
                       <s-table-cell>{run.eansMarkedSent}</s-table-cell>
                       <s-table-cell>
                         {formatSyncRunDate(run.nextRetryAt)}

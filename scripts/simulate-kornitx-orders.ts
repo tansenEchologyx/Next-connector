@@ -6,6 +6,8 @@ import { parseKornitxOrderPayload } from "../app/services/order.parser";
 import { prisma } from "../workers/lib/prisma";
 
 const suffix = Date.now().toString().slice(-6);
+/** Numeric ItemIDs match the KornitX multi-item shipping API (doc uses integer ids). */
+const baseItemId = 280_000_000 + Number(suffix);
 
 const payload = {
   Orders: [
@@ -18,7 +20,7 @@ const payload = {
       OrderExternalRef: `EXT-SINGLE-${suffix}`,
       Items: [
         {
-          ItemID: `ITEM-S1-${suffix}`,
+          ItemID: baseItemId + 1,
           EAN: "1234567890123",
           Quantity: 1,
           PromiseDate: "2026-07-30",
@@ -33,14 +35,14 @@ const payload = {
       Currency: "GBP",
       Items: [
         {
-          ItemID: `ITEM-BA1-${suffix}`,
+          ItemID: baseItemId + 2,
           EAN: "1234567890123",
           Quantity: 1,
           PromiseDate: "2026-07-30",
           OrderExternalRef: `EXT-BA1-${suffix}`,
         },
         {
-          ItemID: `ITEM-BA2-${suffix}`,
+          ItemID: baseItemId + 3,
           EAN: "1234567890124",
           Quantity: 1,
           PromiseDate: "2026-07-31",
@@ -56,14 +58,14 @@ const payload = {
       Currency: "GBP",
       Items: [
         {
-          ItemID: `ITEM-BB1-${suffix}`,
+          ItemID: baseItemId + 4,
           EAN: "1234567890125",
           Quantity: 1,
           PromiseDate: "2026-08-01",
           OrderExternalRef: `EXT-BB1-${suffix}`,
         },
         {
-          ItemID: `ITEM-BB2-${suffix}`,
+          ItemID: baseItemId + 5,
           EAN: "1234567890126",
           Quantity: 1,
           PromiseDate: "2026-08-02",
