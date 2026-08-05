@@ -2,6 +2,7 @@ import type { Prisma } from "@prisma/client";
 
 import prisma from "../db.server";
 import { closeOpenLifecycleInventorySyncRuns } from "./inventory-sync-issues.server";
+import { refreshOrderSendFulfillmentStatus } from "./order-send-fulfillment-status.server";
 import { computeFulfillmentRunAfter } from "../../shared/fulfillment-sync";
 import { computeInventoryRunAfter } from "../../shared/inventory-sync";
 import {
@@ -103,6 +104,7 @@ export async function enqueueSendFulfillmentJobIfNeeded(
     (existing.status === SYNC_JOB_STATUSES.PENDING ||
       existing.status === SYNC_JOB_STATUSES.PROCESSING)
   ) {
+    await refreshOrderSendFulfillmentStatus(kornitxOrderId);
     return existing;
   }
 
@@ -111,35 +113,36 @@ export async function enqueueSendFulfillmentJobIfNeeded(
   const nextRunAt = runAfter > now ? runAfter : now;
   const payload: SendFulfillmentJobPayload = { kornitxOrderId };
 
-  if (!existing) {
-    return prisma.syncJob.create({
-      data: {
-        shop,
-        jobType: SYNC_JOB_TYPES.SEND_FULFILLMENT,
-        idempotencyKey: key,
-        payload: payload as Prisma.InputJsonValue,
-        status: SYNC_JOB_STATUSES.PENDING,
-        runAfter,
-        nextRunAt,
-        maxAttempts: getDefaultMaxAttempts(),
-      },
-    });
-  }
+  const job = !existing
+    ? await prisma.syncJob.create({
+        data: {
+          shop,
+          jobType: SYNC_JOB_TYPES.SEND_FULFILLMENT,
+          idempotencyKey: key,
+          payload: payload as Prisma.InputJsonValue,
+          status: SYNC_JOB_STATUSES.PENDING,
+          runAfter,
+          nextRunAt,
+          maxAttempts: getDefaultMaxAttempts(),
+        },
+      })
+    : await prisma.syncJob.update({
+        where: { id: existing.id },
+        data: {
+          shop,
+          payload: payload as Prisma.InputJsonValue,
+          status: SYNC_JOB_STATUSES.PENDING,
+          runAfter,
+          nextRunAt,
+          attemptCount: 0,
+          lastError: null,
+          lockedAt: null,
+          completedAt: null,
+        },
+      });
 
-  return prisma.syncJob.update({
-    where: { id: existing.id },
-    data: {
-      shop,
-      payload: payload as Prisma.InputJsonValue,
-      status: SYNC_JOB_STATUSES.PENDING,
-      runAfter,
-      nextRunAt,
-      attemptCount: 0,
-      lastError: null,
-      lockedAt: null,
-      completedAt: null,
-    },
-  });
+  await refreshOrderSendFulfillmentStatus(kornitxOrderId);
+  return job;
 }
 
 export async function enqueueSendInventoryDeltaJobIfNeeded(shop: string) {

@@ -98,7 +98,7 @@ Prisma turns `schema.prisma` into TypeScript types and SQL tables.
 | `InventoryDelta` | One row per shop+EAN with latest qty; `status = unsent` until a sync worker sends it |
 | `InventorySyncRun` | One row per inventory send attempt (delta or full feed): status, EAN counts, error, next retry |
 | `InventorySyncIssue` | Open shop-scoped inventory sync warnings/errors (resolved on successful send) |
-| `KornitxOrder` | One row per KornitX batch order (`kornitxId` unique); stores `shopifyFulfillmentStatus` from Shopify webhooks |
+| `KornitxOrder` | One row per KornitX batch order (`kornitxId` unique); stores `shopifyFulfillmentStatus` from Shopify webhooks and denormalized `sendFulfillmentStatus` (`none` / `unsent` / `sent` / `failed`) for Orders list filters |
 | `KornitxOrderItem` | Line items inside a KornitX order |
 | `KornitxOrderIssue` | Active warnings/errors per order |
 | `ShippingStatusEvent` | “Tell KornitX this line shipped/cancelled” queue — unique per `(shopifyOrderId, shopifyLineItemId, status)`; only `sent: false` rows go to KornitX |
@@ -379,9 +379,12 @@ The loader still fetches **all** barcoded variants from Shopify on enter/reload 
 
 ### `/app/orders` — KornitX order list (`app/routes/app.orders.tsx`)
 
-**Loader:** reads URL search params via `parseOrderListFilters()`, then `listOrders(filters)` — paginated orders with items, shipping events, and active issues.
+**Loader:** reads URL search params via `parseOrderListFilters()`, then `listOrders(filters)` — **DB-paginated** orders with items, shipping events, and active issues (no full-table in-memory filter).
 
 **Filters (URL params):** `q`, `status`, `shape`, `fulfillment`, `sendFulfillment`, `sort`, `page`, `pageSize`.
+
+- **Creation status / shape / Shopify fulfillment** — columns on `KornitxOrder` (`status` is indexed; others are simple WHERE filters with `skip`/`take`).
+- **Send fulfillment** — filters on denormalized `sendFulfillmentStatus` (indexed). Kept in sync by `refreshOrderSendFulfillmentStatus()` when shipping events or the `send_fulfillment` SyncJob change. `ShippingStatusEvent` remains the source of truth for what to send to KornitX.
 
 **Table columns:** issue indicator, KornitX ID, order creation status, shape, items, Shopify order name, received date, fulfillment status (Shopify-side), send fulfillment (KornitX sync: unsent / sent / failed), actions.
 
@@ -391,10 +394,11 @@ The loader still fetches **all** barcoded variants from Shopify on enter/reload 
 - **Retry** — any order-creation failure: status `failed` (auto-retry exhausted) **or** still `received`/`processing` with an open order-processing ERROR while auto-retry is scheduled. Confirmation modal, then `retryFailedOrder` **upserts** the single `process_order:{kornitxId}` SyncJob (`attemptCount` → 0, `nextRunAt` → now) — it does **not** create a second job alongside the auto-retry. If that job is already `processing`, it is left alone so the worker cannot claim it twice.
 - **Resend** (send icon) — unsent/failed fulfillment send; opens a confirmation modal, then `resendFulfillmentForOrder` force-resets the order’s `send_fulfillment` SyncJob (`attemptCount` → 0, `nextRunAt` → now or order received + delay) even if the job is already `pending` from automatic retry backoff
 
-**Display helpers:** `shared/order-display.ts` — `resolveFulfillmentStatus()` uses stored Shopify status (`shopifyFulfillmentStatus`); send-fulfillment status still comes from unsent events + SyncJob state.
+**Display helpers:** `shared/order-display.ts` — `resolveFulfillmentStatus()` uses stored Shopify status (`shopifyFulfillmentStatus`); row send-fulfillment badge still derives from unsent events + SyncJob state (same rules as the denormalized column).
 
 **Helper files:**
 - `app/models/kornitx-orders.server.ts` — list, retry, resend
+- `app/models/order-send-fulfillment-status.server.ts` — refresh denormalized `sendFulfillmentStatus`
 - `app/models/kornitx-order-issues.server.ts` — create/resolve issues
 - `app/components/orders/*` — filters, badges, issue popover UI
 

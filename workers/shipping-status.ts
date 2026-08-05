@@ -1,3 +1,4 @@
+import { refreshOrderSendFulfillmentStatus } from "../app/models/order-send-fulfillment-status.server";
 import { loadEnv } from "./lib/load-env";
 import { disconnectPrisma, prisma } from "./lib/prisma";
 
@@ -39,6 +40,11 @@ async function main() {
       where: { id: { in: events.map((e) => e.id) } },
       data: { sent: true, sentAt: now },
     });
+
+    const orderIds = [...new Set(events.map((e) => e.kornitxOrderId))];
+    for (const orderId of orderIds) {
+      await refreshOrderSendFulfillmentStatus(orderId);
+    }
 
     console.log(
       `[shipping-status] Marked ${events.length} event(s) sent (KornitX PUT pending).`,

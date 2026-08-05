@@ -86,6 +86,8 @@ model KornitxOrder {
   shopifyOrderId   String?
   shopifyOrderName String?
   shopifyFulfillmentStatus String? // unfulfilled | partial | fulfilled | cancelled (from Shopify)
+  // Denormalized from ShippingStatusEvent + send_fulfillment SyncJob for list filters
+  sendFulfillmentStatus String @default("none") // none | unsent | sent | failed
   orderReceivedAt  DateTime              @default(now())
   failureReason    String?
   items            KornitxOrderItem[]
@@ -96,6 +98,7 @@ model KornitxOrder {
 
   @@index([status])
   @@index([orderReceivedAt])
+  @@index([sendFulfillmentStatus])
 }
 
 model KornitxOrderIssue {

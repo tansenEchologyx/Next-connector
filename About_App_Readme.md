@@ -2,7 +2,7 @@
 
 Documentation of **features built so far** in the Next Connector Shopify app (KornitX / Next Label Plus integration).
 
-_Last updated: Removed JobRun / Dashboard / legacy InventorySyncState — operational UI is Orders + Inventory Sync log._
+_Last updated: Denormalized `sendFulfillmentStatus` on KornitxOrder for indexed Orders list filters._
 
 ---
 
@@ -38,9 +38,9 @@ This file lists only what is **implemented today**.
   - **InventoryDelta** — unsent inventory changes per EAN (from inventory webhook)
   - **InventorySyncRun** — append-only history of each delta / full-feed send attempt (status, EAN counts, error, next retry)
   - **InventorySyncIssue** — open shop-scoped warnings/errors for inventory sync (delta or full feed); retry messages include next retry time
-  - **KornitxOrder** / **KornitxOrderItem** — inbound KornitX orders (`shopifyOrderName` when created; `shopifyFulfillmentStatus` from Shopify webhooks: unfulfilled / partial / fulfilled / cancelled)
+  - **KornitxOrder** / **KornitxOrderItem** — inbound KornitX orders (`shopifyOrderName` when created; `shopifyFulfillmentStatus` from Shopify webhooks: unfulfilled / partial / fulfilled / cancelled; `sendFulfillmentStatus` denormalized for list filters: none / unsent / sent / failed)
   - **KornitxOrderIssue** — active warnings/errors per order (order processing, fulfillment send); retryable failures surface as warnings with the next retry time
-  - **ShippingStatusEvent** — fulfillment events queued for KornitX
+  - **ShippingStatusEvent** — fulfillment events queued for KornitX (source of truth for outbound line/order status; drives worker sends)
   - **SyncJob** — unified work queue (`process_order`, `send_fulfillment`, `send_inventory_delta`, `send_inventory_full_feed`)
 
 ### 3. Admin UI (Polaris Web Components)
@@ -50,7 +50,7 @@ This file lists only what is **implemented today**.
 | Route | Purpose |
 |-------|---------|
 | `/app` | Redirects to `/app/orders` |
-| `/app/orders` | Full-width paginated KornitX order list — times in **UK timezone**; search/filters (including Shopify fulfillment status), issues, **Retry** on any order-creation failure (auto-retry pending or exhausted), fulfillment Resend |
+| `/app/orders` | Full-width paginated KornitX order list — times in **UK timezone**; search/filters (creation status, shape, Shopify fulfillment, send-to-KornitX status via indexed `sendFulfillmentStatus`), issues, **Retry** on any order-creation failure (auto-retry pending or exhausted), fulfillment Resend |
 | `/app/inventory` | Full-width paginated product table with checkboxes — **all shop barcoded variants**; qty/availability at configured location; search + availability + tracking filters; page size 10/25/50; optional **Show tracked first** (default off; reorder after Save when on); **header checkbox** selects/deselects the full catalog; draft selection persists across search/filter/pagination until Save or leaving the page; **Products / Sync log** tabs |
 | `/app/inventory/sync-log` | Inventory sync run history — update-in-place for backoff retries (Failed + Next retry); terminal Failed clears Next retry; delta partial is a separate historical row; status badges (success / partial / failed / deferred / skipped); issue popover; filters by type/status/sort |
 | `/app/settings` | Full-width page — KornitX Ref ID, B2B customer, **Next Label Plus orders** (pre-emptive prefix + require toggle), **Inventory sync** (delta interval minutes, location, use-primary toggle, daily full-feed enable + UK time), inbound webhook URL |

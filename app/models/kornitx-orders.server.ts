@@ -9,10 +9,7 @@ import {
   enqueueProcessOrderJob,
   enqueueSendFulfillmentJobIfNeeded,
 } from "./sync-jobs.server";
-import {
-  deriveSendFulfillmentStatus,
-  serializeOrderListRow,
-} from "../../shared/order-display";
+import { serializeOrderListRow } from "../../shared/order-display";
 import { SYNC_JOB_TYPES } from "../../shared/sync-job-types";
 
 export type OrderListFilters = {
@@ -75,17 +72,10 @@ function buildWhere(filters: OrderListFilters): Prisma.KornitxOrderWhereInput {
 
   switch (filters.sendFulfillment) {
     case "none":
-      where.shippingEvents = { none: {} };
-      break;
     case "unsent":
-      where.shippingEvents = { some: { sent: false } };
-      break;
     case "sent":
-      where.shippingEvents = { some: {} };
-      where.NOT = { shippingEvents: { some: { sent: false } } };
-      break;
     case "failed":
-      where.shippingEvents = { some: { sent: false } };
+      where.sendFulfillmentStatus = filters.sendFulfillment;
       break;
   }
 
@@ -123,71 +113,11 @@ const orderInclude = {
   },
 };
 
-function needsInMemoryFilter(filters: OrderListFilters): boolean {
-  return filters.sendFulfillment === "failed";
-}
-
-function matchesInMemoryFilters(
-  order: {
-    orderShape: string;
-    status: string;
-    items: { length: number };
-    shippingEvents: Array<{ status: string; sent: boolean }>;
-    kornitxId: string;
-  },
-  filters: OrderListFilters,
-  fulfillmentJobs: Map<string, { status: string; lastError: string | null }>,
-): boolean {
-  if (filters.sendFulfillment === "failed") {
-    const sendInfo = deriveSendFulfillmentStatus(
-      order.shippingEvents as never,
-      fulfillmentJobs.get(order.kornitxId) ?? null,
-    );
-    if (sendInfo.status !== "failed") return false;
-  }
-
-  return true;
-}
-
 export async function listOrders(filters: OrderListFilters) {
   const where = buildWhere(filters);
   const orderBy = {
     orderReceivedAt: filters.sort === "oldest" ? "asc" : "desc",
   } as const;
-
-  if (needsInMemoryFilter(filters)) {
-    const candidates = await prisma.kornitxOrder.findMany({
-      where,
-      orderBy,
-      include: orderInclude,
-    });
-
-    const fulfillmentJobs = await fetchFulfillmentJobs(
-      candidates.map((order) => order.kornitxId),
-    );
-
-    const filtered = candidates.filter((order) =>
-      matchesInMemoryFilters(order, filters, fulfillmentJobs),
-    );
-
-    const totalCount = filtered.length;
-    const skip = (filters.page - 1) * filters.pageSize;
-    const pageOrders = filtered.slice(skip, skip + filters.pageSize);
-
-    return {
-      orders: pageOrders.map((order) =>
-        serializeOrderListRow(
-          order,
-          fulfillmentJobs.get(order.kornitxId) ?? null,
-        ),
-      ),
-      totalCount,
-      page: filters.page,
-      pageSize: filters.pageSize,
-      totalPages: Math.max(1, Math.ceil(totalCount / filters.pageSize)),
-      filters,
-    };
-  }
 
   const skip = (filters.page - 1) * filters.pageSize;
   const [orders, totalCount] = await Promise.all([
