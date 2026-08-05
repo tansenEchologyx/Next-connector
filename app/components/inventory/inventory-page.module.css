@@ -97,6 +97,30 @@
   min-width: 960px;
 }
 
+/* Sync log: pin the issue-indicator column so Type is not pushed right.
+   Long popover copy must not contribute to column width. */
+.syncLogTable :is(s-table-header, s-table-cell):first-child {
+  width: 48px;
+  max-width: 48px;
+  box-sizing: border-box;
+}
+
+.issueHeader,
+.issueCell {
+  display: block;
+  width: 0;
+  max-width: 0;
+  min-width: 0;
+  position: relative;
+}
+
+.issueCell s-popover {
+  position: absolute;
+  left: 0;
+  top: 100%;
+  z-index: 2;
+}
+
 .trackHeader {
   display: inline-flex;
   align-items: center;

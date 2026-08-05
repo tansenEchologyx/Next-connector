@@ -10,7 +10,7 @@ export type InventoryVariantForFilter = {
 export type InventoryAvailabilityFilter = "all" | "available" | "unavailable";
 export type InventoryTrackingFilter = "all" | "tracked" | "untracked";
 
-export const INVENTORY_PAGE_SIZES = [10, 25, 50] as const;
+export const INVENTORY_PAGE_SIZES = [25, 50, 100] as const;
 export type InventoryPageSize = (typeof INVENTORY_PAGE_SIZES)[number];
 
 export type InventoryListFilters = {
@@ -35,12 +35,12 @@ export function parseInventoryListFilters(
     trackedFirstParam === "true" ||
     trackedFirstParam === "on";
   const page = Math.max(1, Number(searchParams.get("page") ?? "1") || 1);
-  const rawPageSize = Number(searchParams.get("pageSize") ?? "10");
+  const rawPageSize = Number(searchParams.get("pageSize") ?? "25");
   const pageSize = (INVENTORY_PAGE_SIZES as readonly number[]).includes(
     rawPageSize,
   )
     ? (rawPageSize as InventoryPageSize)
-    : 10;
+    : 25;
 
   return {
     q: searchParams.get("q") ?? "",

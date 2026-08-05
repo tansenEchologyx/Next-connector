@@ -316,7 +316,7 @@ export default function InventoryPage() {
 
   const handlePageSizeChange = (value: string) => {
     const params = new URLSearchParams(searchParams);
-    if (value === "10") {
+    if (value === "25") {
       params.delete("pageSize");
     } else {
       params.set("pageSize", value);
@@ -486,9 +486,9 @@ export default function InventoryPage() {
                         handlePageSizeChange(readPolarisValue(event))
                       }
                     >
-                      <s-option value="10">10</s-option>
                       <s-option value="25">25</s-option>
                       <s-option value="50">50</s-option>
+                      <s-option value="100">100</s-option>
                     </s-select>
                   </div>
                   <span className={styles.pageSizeLabel}>
@@ -523,31 +523,6 @@ export default function InventoryPage() {
             </div>
           )}
 
-          <s-box padding="base" background="subdued" borderRadius="base">
-            <s-stack direction="block" gap="base">
-              <s-text type="strong">How it works</s-text>
-              <s-unordered-list>
-                <s-list-item>
-                  All barcoded variants in your store are listed; qty and
-                  availability come from the location in Settings.
-                </s-list-item>
-                <s-list-item>
-                  Out-of-stock items appear as Unavailable but can still be
-                  tracked.
-                </s-list-item>
-                <s-list-item>
-                  Inventory webhooks store unsent rows in the inventory delta
-                  table for tracked SKUs and enqueue one coalesced sync job.
-                </s-list-item>
-                <s-list-item>
-                  The unified <s-text type="strong">run-jobs</s-text> worker
-                  sends unsent deltas to KornitX using the{" "}
-                  <s-text type="strong">Inventory delta interval</s-text> set in
-                  Settings (default 30 minutes).
-                </s-list-item>
-              </s-unordered-list>
-            </s-stack>
-          </s-box>
         </Form>
       </div>
     </s-page>

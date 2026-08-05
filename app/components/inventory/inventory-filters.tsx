@@ -92,7 +92,7 @@ export function InventoryFilters({
     if (debounceRef.current) clearTimeout(debounceRef.current);
     const params = new URLSearchParams();
     const pageSize = searchParams.get("pageSize");
-    if (pageSize && pageSize !== "10") {
+    if (pageSize && pageSize !== "25") {
       params.set("pageSize", pageSize);
     }
     submit(params, { method: "get", replace: true });

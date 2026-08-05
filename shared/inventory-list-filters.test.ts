@@ -30,11 +30,23 @@ describe("parseInventoryListFilters", () => {
     assert.equal(filters.trackedFirst, false);
   });
 
+  it("defaults pageSize to 25", () => {
+    const filters = parseInventoryListFilters(new URLSearchParams());
+    assert.equal(filters.pageSize, 25);
+  });
+
   it("parses trackedFirst=1 as true", () => {
     const filters = parseInventoryListFilters(
       new URLSearchParams("trackedFirst=1"),
     );
     assert.equal(filters.trackedFirst, true);
+  });
+
+  it("falls back to 25 for unsupported pageSize values", () => {
+    const filters = parseInventoryListFilters(
+      new URLSearchParams("pageSize=10"),
+    );
+    assert.equal(filters.pageSize, 25);
   });
 });
 

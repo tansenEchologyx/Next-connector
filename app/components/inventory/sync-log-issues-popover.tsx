@@ -1,3 +1,4 @@
+import styles from "./inventory-page.module.css";
 import {
   formatSyncRunDate,
   issueTypeLabel,
@@ -21,7 +22,11 @@ export function SyncLogIssuesPopover({
   issues,
 }: SyncLogIssuesPopoverProps) {
   if (issues.length === 0) {
-    return <s-table-cell />;
+    return (
+      <s-table-cell>
+        <div className={styles.issueCell} aria-hidden="true" />
+      </s-table-cell>
+    );
   }
 
   const popoverId = `sync-log-issues-${runId}`;
@@ -31,33 +36,35 @@ export function SyncLogIssuesPopover({
 
   return (
     <s-table-cell>
-      <s-button
-        id={triggerId}
-        variant="tertiary"
-        accessibilityLabel={`Open issues (${issues.length})`}
-        commandFor={popoverId}
-        command="--toggle"
-      >
-        <s-icon type="alert-circle" tone={iconTone} />
-      </s-button>
-      <s-popover id={popoverId}>
-        <s-box padding="base">
-          <s-stack direction="block" gap="base">
-            <s-text type="strong">Open issues ({issues.length})</s-text>
-            {issues.map((issue) => (
-              <s-stack key={issue.id} direction="block" gap="small">
-                <s-badge tone={issueTypeTone(issue.type)}>
-                  {issueTypeLabel(issue.type)}
-                </s-badge>
-                <s-paragraph>{issue.message}</s-paragraph>
-                <s-text color="subdued">
-                  {formatSyncRunDate(issue.createdAt)}
-                </s-text>
-              </s-stack>
-            ))}
-          </s-stack>
-        </s-box>
-      </s-popover>
+      <div className={styles.issueCell}>
+        <s-button
+          id={triggerId}
+          variant="tertiary"
+          accessibilityLabel={`Open issues (${issues.length})`}
+          commandFor={popoverId}
+          command="--toggle"
+        >
+          <s-icon type="alert-circle" tone={iconTone} />
+        </s-button>
+        <s-popover id={popoverId}>
+          <s-box padding="base">
+            <s-stack direction="block" gap="base">
+              <s-text type="strong">Open issues ({issues.length})</s-text>
+              {issues.map((issue) => (
+                <s-stack key={issue.id} direction="block" gap="small">
+                  <s-badge tone={issueTypeTone(issue.type)}>
+                    {issueTypeLabel(issue.type)}
+                  </s-badge>
+                  <s-paragraph>{issue.message}</s-paragraph>
+                  <s-text color="subdued">
+                    {formatSyncRunDate(issue.createdAt)}
+                  </s-text>
+                </s-stack>
+              ))}
+            </s-stack>
+          </s-box>
+        </s-popover>
+      </div>
     </s-table-cell>
   );
 }

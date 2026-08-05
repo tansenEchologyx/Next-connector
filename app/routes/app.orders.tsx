@@ -173,7 +173,11 @@ export default function OrdersPage() {
 
   return (
     <s-page heading="Orders" inlineSize="large">
-      <s-button slot="secondary-action" variant="secondary" onClick={refreshList}>
+      <s-button
+        slot="secondary-actions"
+        variant="secondary"
+        onClick={refreshList}
+      >
         Refresh
       </s-button>
 

@@ -82,7 +82,11 @@ export default function InventorySyncLogPage() {
 
   return (
     <s-page heading="Inventory sync" inlineSize="large">
-      <s-button slot="secondary-action" variant="secondary" onClick={refreshList}>
+      <s-button
+        slot="secondary-actions"
+        variant="secondary"
+        onClick={refreshList}
+      >
         Refresh
       </s-button>
 
@@ -99,10 +103,12 @@ export default function InventorySyncLogPage() {
         </div>
 
         <div className={styles.tableCard}>
-          <div className={styles.tableWrap}>
+          <div className={`${styles.tableWrap} ${styles.syncLogTable}`}>
             <s-table variant="auto" loading={isLoading}>
               <s-table-header-row>
-                  <s-table-header />
+                <s-table-header>
+                  <span className={styles.issueHeader} aria-hidden="true" />
+                </s-table-header>
                 <s-table-header listSlot="primary">Type</s-table-header>
                 <s-table-header>Status</s-table-header>
                 <s-table-header>Started</s-table-header>
