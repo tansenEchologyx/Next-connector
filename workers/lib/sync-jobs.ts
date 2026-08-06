@@ -124,16 +124,23 @@ export async function failSyncJobWithBackoff(
     return { terminal: true as const, message };
   }
 
+  const nextRunAt = computeNextRetryAt(nextAttempt);
+
   await prisma.syncJob.update({
     where: { id: job.id },
     data: {
       status: SYNC_JOB_STATUSES.PENDING,
       attemptCount: nextAttempt,
-      nextRunAt: computeNextRetryAt(nextAttempt),
+      nextRunAt,
       lastError: message,
       lockedAt: null,
     },
   });
 
-  return { terminal: false as const, message };
+  return {
+    terminal: false as const,
+    message,
+    attemptCount: nextAttempt,
+    nextRunAt,
+  };
 }

@@ -25,6 +25,10 @@ api_version = "2026-10"
   topics = [ "orders/fulfilled" ]
 
   [[webhooks.subscriptions]]
+  uri = "/webhooks/orders/partially_fulfilled"
+  topics = [ "orders/partially_fulfilled" ]
+
+  [[webhooks.subscriptions]]
   uri = "/webhooks/orders/cancelled"
   topics = [ "orders/cancelled" ]
 
@@ -33,7 +37,8 @@ api_version = "2026-10"
   topics = [ "inventory_levels/update" ]
 
 [auth]
-redirect_urls = [ "https://example.com/api/auth" ]
+redirect_urls = ["https://example.com/auth/callback",
+  "https://example.com/auth/callback"]
 
 [build]
 include_config_on_deploy = true

@@ -2,6 +2,7 @@ import { SYNC_JOB_TYPES } from "../../shared/sync-job-types";
 import { handleProcessOrderJob } from "./handlers/process-order-job";
 import { handleSendFulfillmentJob } from "./handlers/send-fulfillment-job";
 import { handleSendInventoryDeltaJob } from "./handlers/send-inventory-delta-job";
+import { handleSendInventoryFullFeedJob } from "./handlers/send-inventory-full-feed-job";
 
 export async function dispatchSyncJob(
   job: import("@prisma/client").SyncJob,
@@ -13,6 +14,8 @@ export async function dispatchSyncJob(
       return handleSendFulfillmentJob(job);
     case SYNC_JOB_TYPES.SEND_INVENTORY_DELTA:
       return handleSendInventoryDeltaJob(job);
+    case SYNC_JOB_TYPES.SEND_INVENTORY_FULL_FEED:
+      return handleSendInventoryFullFeedJob(job);
     default:
       throw new Error(`Unknown sync job type: ${job.jobType}`);
   }

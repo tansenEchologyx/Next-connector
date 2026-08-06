@@ -2,7 +2,9 @@
 // Local dev: PostgreSQL via Docker (see docker-compose.yml)
 
 generator client {
-  provider = "prisma-client-js"
+  provider      = "prisma-client-js"
+  // native = local/dev; debian-openssl-3.0.x = Amplify SSR Linux compute
+  binaryTargets = ["native", "debian-openssl-3.0.x"]
 }
 
 datasource db {
@@ -35,69 +37,84 @@ model Session {
 // --- App configuration (per shop) ---
 
 model AppSettings {
-  id                     Int     @id @default(autoincrement())
-  shop                   String  @unique
-  kornitxRefId           String  @default("")
-  deltaIntervalMinutes   Int     @default(30)
-  inventoryLocationId    String  @default("")
-  b2bCustomerId          String  @default("")
-  defaultShippingAddress Json    @default("{}")
-  inboundAuthType        String  @default("basic")
-  preemptiveOrderPrefix  String?
-  lastInventorySyncAt    DateTime?
-  createdAt              DateTime @default(now())
-  updatedAt              DateTime @updatedAt
+  id                          Int       @id @default(autoincrement())
+  shop                        String    @unique
+  kornitxRefId                String    @default("")
+  deltaIntervalMinutes        Float     @default(30)
+  inventoryLocationId         String    @default("")
+  usePrimaryInventoryLocation Boolean   @default(false)
+  dailyFullFeedEnabled        Boolean   @default(false)
+  dailyFullFeedTime           String    @default("")
+  lastDailyFullFeedAt         DateTime?
+  b2bCustomerId               String    @default("")
+  defaultShippingAddress      Json      @default("{}")
+  useCustomerShippingAddress  Boolean   @default(false)
+  inboundAuthType             String    @default("basic")
+  preemptiveOrderPrefix       String?
+  requirePreemptivePrefix     Boolean   @default(false)
+  lastInventorySyncAt         DateTime?
+  createdAt                   DateTime  @default(now())
+  updatedAt                   DateTime  @updatedAt
 }
 
 // --- Inventory tracking (checkbox list in admin UI) ---
 
 model TrackedProduct {
-  id                 Int                 @id @default(autoincrement())
-  shop               String
-  variantId          String
-  ean                String
-  sku                String?
-  productTitle       String
-  enabled            Boolean             @default(true)
-  inventorySyncState InventorySyncState?
-  createdAt          DateTime            @default(now())
-  updatedAt          DateTime            @updatedAt
+  id           Int      @id @default(autoincrement())
+  shop         String
+  variantId    String
+  ean          String
+  sku          String?
+  productTitle String
+  enabled      Boolean  @default(true)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
 
   @@unique([shop, variantId])
   @@index([shop, enabled])
 }
 
-model InventorySyncState {
-  id               Int            @id @default(autoincrement())
-  trackedProductId Int            @unique
-  trackedProduct   TrackedProduct @relation(fields: [trackedProductId], references: [id], onDelete: Cascade)
-  pendingQuantity  Int            @default(0)
-  lastSentQuantity Int?
-  lastChangedAt    DateTime       @default(now())
-  lastSentAt       DateTime?
-  needsSync        Boolean        @default(false)
-}
-
 // --- KornitX orders ---
 
 model KornitxOrder {
-  id              Int                   @id @default(autoincrement())
-  kornitxId       String                @unique
-  brand           String
-  destination     String
-  currency        String
-  dateTimeStamp   DateTime
-  orderShape      String                // single | batched
-  status          String                @default("received") // received | processing | created | failed
-  shopifyOrderId  String?
-  orderReceivedAt DateTime              @default(now())
-  failureReason   String?
-  items           KornitxOrderItem[]
-  shippingEvents  ShippingStatusEvent[]
-  createdAt       DateTime              @default(now())
-  updatedAt       DateTime              @updatedAt
+  id               Int                   @id @default(autoincrement())
+  kornitxId        String                @unique
+  brand            String
+  destination      String
+  currency         String
+  dateTimeStamp    DateTime
+  orderShape       String                // single | batched
+  status           String                @default("received") // received | processing | created | failed
+  shopifyOrderId   String?
+  shopifyOrderName String?
+  shopifyFulfillmentStatus String? // unfulfilled | partial | fulfilled | cancelled (from Shopify)
+  // Denormalized from ShippingStatusEvent + send_fulfillment SyncJob for list filters
+  sendFulfillmentStatus String @default("none") // none | unsent | sent | failed
+  orderReceivedAt  DateTime              @default(now())
+  failureReason    String?
+  items            KornitxOrderItem[]
+  shippingEvents   ShippingStatusEvent[]
+  issues           KornitxOrderIssue[]
+  createdAt        DateTime              @default(now())
+  updatedAt        DateTime              @updatedAt
 
   @@index([status])
+  @@index([orderReceivedAt])
+  @@index([sendFulfillmentStatus])
+}
+
+model KornitxOrderIssue {
+  id         Int          @id @default(autoincrement())
+  orderId    Int
+  order      KornitxOrder @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  type       String       // error | warning
+  source     String       // order_processing | fulfillment_send
+  message    String
+  createdAt  DateTime     @default(now())
+  resolvedAt DateTime?
+
+  @@index([orderId, resolvedAt])
+  @@index([orderId, source, resolvedAt])
 }
 
 model KornitxOrderItem {
@@ -137,7 +154,7 @@ model ShippingStatusEvent {
 model SyncJob {
   id             Int       @id @default(autoincrement())
   shop           String
-  jobType        String    // process_order | send_fulfillment | send_inventory_delta
+  jobType        String    // process_order | send_fulfillment | send_inventory_delta | send_inventory_full_feed
   status         String    @default("pending") // pending | processing | completed | failed
   idempotencyKey String    @unique
   payload        Json
@@ -172,16 +189,59 @@ model InventoryDelta {
   @@index([shop, status])
 }
 
-// --- Worker observability ---
+// --- Inventory sync observability (admin Sync log) ---
 
-model JobRun {
+model InventorySyncRun {
+  id             Int       @id @default(autoincrement())
+  shop           String
+  syncType       String    // delta | full_feed
+  status         String    // success | partial | failed | deferred | skipped
+  eansAttempted  Int       @default(0)
+  eansMarkedSent Int       @default(0)
+  skippedRace    Int       @default(0)
+  errorMessage   String?
+  nextRetryAt    DateTime?
+  syncJobId      Int?
+  startedAt      DateTime  @default(now())
+  finishedAt     DateTime?
+  metadata       Json?
+
+  @@index([shop, startedAt])
+  @@index([shop, syncType, status])
+}
+
+model InventorySyncIssue {
   id         Int       @id @default(autoincrement())
-  jobName    String
-  status     String    // running | completed | failed
-  startedAt  DateTime  @default(now())
-  finishedAt DateTime?
-  error      String?
-  metadata   Json?
+  shop       String
+  syncType   String    // delta | full_feed
+  type       String    // error | warning
+  message    String
+  createdAt  DateTime  @default(now())
+  resolvedAt DateTime?
 
-  @@index([jobName, startedAt])
+  @@index([shop, resolvedAt])
+  @@index([shop, syncType, resolvedAt])
+}
+
+// --- Operational event log (admin feed) ---
+
+model EventLog {
+  id               Int      @id @default(autoincrement())
+  shop             String
+  level            String   // info | success | warn | error
+  category         String   // inventory_delta | full_feed_inventory | order_from_kornitx | sync_job | shipment
+  eventName        String
+  message          String
+  kornitxOrderId   String?
+  shopifyOrderId   String?
+  shopifyOrderName String?
+  syncJobId        Int?
+  metadata         Json?
+  createdAt        DateTime @default(now())
+
+  @@index([shop, createdAt(sort: Desc), id(sort: Desc)])
+  @@index([shop, level, createdAt(sort: Desc)])
+  @@index([shop, category, createdAt(sort: Desc)])
+  @@index([shop, shopifyOrderName])
+  @@index([shop, kornitxOrderId])
 }

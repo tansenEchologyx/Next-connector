@@ -3,6 +3,7 @@ import { Outlet, useLoaderData, useRouteError } from "react-router";
 import { boundary } from "@shopify/shopify-app-react-router/server";
 import { AppProvider } from "@shopify/shopify-app-react-router/react";
 
+import { NavigationLoading } from "../components/navigation-loading";
 import { authenticate } from "../shopify.server";
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {
@@ -17,11 +18,12 @@ export default function App() {
 
   return (
     <AppProvider embedded apiKey={apiKey}>
+      <NavigationLoading />
       <s-app-nav>
-        <s-link href="/app">Dashboard</s-link>
-        <s-link href="/app/settings">Settings</s-link>
-        <s-link href="/app/inventory">Inventory</s-link>
         <s-link href="/app/orders">Orders</s-link>
+        <s-link href="/app/inventory">Inventory</s-link>
+        <s-link href="/app/event-log">Event log</s-link>
+        <s-link href="/app/settings">Settings</s-link>
       </s-app-nav>
       <Outlet />
     </AppProvider>

@@ -20,9 +20,10 @@
     "db:studio": "prisma studio",
     "worker:run-jobs": "tsx workers/run-jobs.ts",
     "worker:process-orders": "tsx workers/run-jobs.ts",
-    "worker:stock-delta": "tsx workers/stock-delta.ts",
     "worker:stock-full-feed": "tsx workers/stock-full-feed.ts",
     "worker:shipping-status": "tsx workers/shipping-status.ts",
+    "simulate:kornitx-orders": "tsx scripts/simulate-kornitx-orders.ts",
+    "post:kornitx-orders-webhook": "tsx scripts/post-kornitx-orders-webhook.ts",
     "lint": "eslint --ignore-path .gitignore --cache --cache-location ./node_modules/.cache/eslint .",
     "shopify": "shopify",
     "prisma": "prisma",
@@ -37,13 +38,17 @@
   "dependencies": {
     "@prisma/client": "^6.16.3",
     "@react-router/dev": "^7.12.0",
+    "@react-router/express": "^7.18.1",
     "@react-router/fs-routes": "^7.12.0",
     "@react-router/node": "^7.12.0",
     "@react-router/serve": "^7.12.0",
     "@shopify/app-bridge-react": "^4.2.4",
     "@shopify/shopify-app-react-router": "^1.1.0",
     "@shopify/shopify-app-session-storage-prisma": "^9.0.0",
+    "compression": "^1.8.1",
+    "express": "^5.2.1",
     "isbot": "^5.1.31",
+    "morgan": "^1.11.0",
     "prisma": "^6.16.3",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
@@ -53,7 +58,10 @@
   "devDependencies": {
     "@shopify/api-codegen-preset": "^2.0.0",
     "@shopify/polaris-types": "1.0.1",
+    "@types/compression": "^1.8.1",
     "@types/eslint": "^9.6.1",
+    "@types/express": "^5.0.6",
+    "@types/morgan": "^1.9.10",
     "@types/node": "^25.5.2",
     "@types/react": "^18.3.25",
     "@types/react-dom": "^18.3.7",
@@ -70,7 +78,8 @@
     "prettier": "^3.6.2",
     "tsx": "^4.23.1",
     "typescript": "^5.9.3",
-    "vite": "^7.3.1"
+    "vite": "^7.3.1",
+    "vite-plugin-react-router-amplify-hosting": "^1.1.1"
   },
   "workspaces": [
     "extensions/*"

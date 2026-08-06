@@ -1,0 +1,175 @@
+.eventLogPage {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  width: 100%;
+}
+
+.infoBanner {
+  padding: 16px;
+  background: var(--p-color-bg-surface, #fff);
+  border: 1px solid var(--p-color-border, #e3e3e3);
+  border-radius: 12px;
+}
+
+.infoBannerTitle {
+  font-weight: 600;
+  margin-bottom: 4px;
+}
+
+.lastRefresh {
+  margin-top: 8px;
+  color: var(--p-color-text-secondary, #616161);
+  font-size: 13px;
+}
+
+.filterCard {
+  padding: 16px;
+  background: var(--p-color-bg-surface, #fff);
+  border: 1px solid var(--p-color-border, #e3e3e3);
+  border-radius: 12px;
+  overflow: hidden;
+}
+
+.filterForm {
+  width: 100%;
+}
+
+.filterRow {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 12px;
+}
+
+.filterField {
+  flex: 1 1 160px;
+  min-width: 0;
+}
+
+.filterSearch {
+  flex: 2 1 220px;
+  min-width: 0;
+}
+
+.filterClear {
+  flex: 0 0 auto;
+  margin-left: auto;
+}
+
+.dateRangeField {
+  position: relative;
+}
+
+.dateRangeTrigger {
+  width: 100%;
+}
+
+.feedList {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.eventCard {
+  padding: 14px 16px;
+  background: var(--p-color-bg-surface, #fff);
+  border: 1px solid var(--p-color-border, #e3e3e3);
+  border-radius: 12px;
+}
+
+.eventHeader {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
+.eventMeta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.eventName {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 13px;
+  color: var(--p-color-text, #303030);
+}
+
+.eventTime {
+  flex: 0 0 auto;
+  font-size: 13px;
+  color: var(--p-color-text-secondary, #616161);
+  white-space: nowrap;
+}
+
+.eventMessage {
+  font-size: 14px;
+  line-height: 1.45;
+  color: var(--p-color-text, #303030);
+}
+
+.orderLink {
+  color: var(--p-color-text-link, #005bd3);
+  text-decoration: none;
+}
+
+.orderLink:hover {
+  text-decoration: underline;
+}
+
+.levelBadge,
+.categoryBadge {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 8px;
+  border-radius: 6px;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+}
+
+.levelInfo {
+  background: #e0f0ff;
+  color: #003d7a;
+}
+
+.levelSuccess {
+  background: #cdfee1;
+  color: #0c5132;
+}
+
+.levelWarn {
+  background: #fff1e3;
+  color: #7a4300;
+}
+
+.levelError {
+  background: #fee8eb;
+  color: #8e1f0b;
+}
+
+.categoryBadge {
+  background: var(--p-color-bg-surface-secondary, #f7f7f7);
+  color: var(--p-color-text-secondary, #616161);
+}
+
+.emptyState {
+  padding: 48px 24px;
+  text-align: center;
+  background: var(--p-color-bg-surface, #fff);
+  border: 1px solid var(--p-color-border, #e3e3e3);
+  border-radius: 12px;
+}
+
+.loadMoreWrap {
+  display: flex;
+  justify-content: center;
+  padding: 8px 0 16px;
+}

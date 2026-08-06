@@ -1,21 +1,188 @@
-import prisma from "../db.server";
-import { enqueueProcessOrderJob } from "./sync-jobs.server";
+import type { Prisma } from "@prisma/client";
 
-export async function listRecentOrders(limit = 50) {
-  return prisma.kornitxOrder.findMany({
-    orderBy: { orderReceivedAt: "desc" },
-    take: limit,
-    include: {
-      items: true,
-      _count: { select: { shippingEvents: true } },
-    },
-  });
+import prisma from "../db.server";
+import {
+  ISSUE_SOURCES,
+  resolveOrderIssuesBySource,
+} from "./kornitx-order-issues.server";
+import { writeEventLog } from "./event-log.server";
+import {
+  enqueueProcessOrderJob,
+  enqueueSendFulfillmentJobIfNeeded,
+} from "./sync-jobs.server";
+import { serializeOrderListRow } from "../../shared/order-display";
+import {
+  EVENT_LOG_CATEGORIES,
+  EVENT_LOG_LEVELS,
+} from "../../shared/event-log";
+import { SYNC_JOB_TYPES } from "../../shared/sync-job-types";
+
+export type OrderListFilters = {
+  page: number;
+  pageSize: number;
+  q: string;
+  status: string;
+  shape: string;
+  fulfillment: string;
+  sendFulfillment: string;
+  sort: "newest" | "oldest";
+};
+
+function sendFulfillmentKey(kornitxId: string): string {
+  return `${SYNC_JOB_TYPES.SEND_FULFILLMENT}:order:${kornitxId}`;
 }
 
+function buildWhere(filters: OrderListFilters): Prisma.KornitxOrderWhereInput {
+  const where: Prisma.KornitxOrderWhereInput = {};
+
+  if (filters.status !== "all") {
+    where.status = filters.status;
+  }
+
+  if (filters.shape !== "all") {
+    where.orderShape = filters.shape;
+  }
+
+  if (filters.q.trim()) {
+    const q = filters.q.trim();
+    where.OR = [
+      { kornitxId: { contains: q, mode: "insensitive" } },
+      { brand: { contains: q, mode: "insensitive" } },
+      { shopifyOrderName: { contains: q, mode: "insensitive" } },
+      { shopifyOrderId: { contains: q, mode: "insensitive" } },
+    ];
+  }
+
+  switch (filters.fulfillment) {
+    case "pending":
+      where.status = { not: "created" };
+      break;
+    case "unfulfilled":
+      where.status = "created";
+      where.OR = [
+        { shopifyFulfillmentStatus: null },
+        { shopifyFulfillmentStatus: "unfulfilled" },
+      ];
+      break;
+    case "fulfilled":
+      where.shopifyFulfillmentStatus = "fulfilled";
+      break;
+    case "cancelled":
+      where.shopifyFulfillmentStatus = "cancelled";
+      break;
+    case "partial":
+      where.shopifyFulfillmentStatus = "partial";
+      break;
+  }
+
+  switch (filters.sendFulfillment) {
+    case "none":
+    case "unsent":
+    case "sent":
+    case "failed":
+      where.sendFulfillmentStatus = filters.sendFulfillment;
+      break;
+  }
+
+  return where;
+}
+
+async function fetchFulfillmentJobs(kornitxIds: string[]) {
+  if (kornitxIds.length === 0) {
+    return new Map<string, { status: string; lastError: string | null }>();
+  }
+
+  const keys = kornitxIds.map(sendFulfillmentKey);
+  const jobs = await prisma.syncJob.findMany({
+    where: { idempotencyKey: { in: keys } },
+    select: { idempotencyKey: true, status: true, lastError: true },
+  });
+
+  const map = new Map<string, { status: string; lastError: string | null }>();
+  for (const job of jobs) {
+    const kornitxId = job.idempotencyKey.replace(
+      `${SYNC_JOB_TYPES.SEND_FULFILLMENT}:order:`,
+      "",
+    );
+    map.set(kornitxId, { status: job.status, lastError: job.lastError });
+  }
+  return map;
+}
+
+const orderInclude = {
+  items: true,
+  shippingEvents: true,
+  issues: {
+    where: { resolvedAt: null },
+    orderBy: { createdAt: "desc" as const },
+  },
+};
+
+export async function listOrders(filters: OrderListFilters) {
+  const where = buildWhere(filters);
+  const orderBy = {
+    orderReceivedAt: filters.sort === "oldest" ? "asc" : "desc",
+  } as const;
+
+  const skip = (filters.page - 1) * filters.pageSize;
+  const [orders, totalCount] = await Promise.all([
+    prisma.kornitxOrder.findMany({
+      where,
+      orderBy,
+      skip,
+      take: filters.pageSize,
+      include: orderInclude,
+    }),
+    prisma.kornitxOrder.count({ where }),
+  ]);
+
+  const fulfillmentJobs = await fetchFulfillmentJobs(
+    orders.map((order) => order.kornitxId),
+  );
+
+  return {
+    orders: orders.map((order) =>
+      serializeOrderListRow(order, fulfillmentJobs.get(order.kornitxId) ?? null),
+    ),
+    totalCount,
+    page: filters.page,
+    pageSize: filters.pageSize,
+    totalPages: Math.max(1, Math.ceil(totalCount / filters.pageSize)),
+    filters,
+  };
+}
+
+/**
+ * Manual retry for Shopify order creation failures — both while auto-retry
+ * backoff is still running (status often `received`) and after attempts are
+ * exhausted (`failed`).
+ *
+ * Does not create a second SyncJob: `enqueueProcessOrderJob` upserts the
+ * single `process_order:{kornitxId}` row (resets nextRunAt to now). If that
+ * job is already PROCESSING, it is left alone so the worker cannot claim it twice.
+ */
 export async function retryFailedOrder(shop: string, orderId: number) {
-  const order = await prisma.kornitxOrder.findUnique({ where: { id: orderId } });
-  if (!order || order.status !== "failed") {
-    throw new Error("Only failed orders can be retried");
+  const order = await prisma.kornitxOrder.findUnique({
+    where: { id: orderId },
+    include: { issues: true },
+  });
+
+  if (!order) {
+    throw new Error("Order not found");
+  }
+
+  if (order.status === "created") {
+    throw new Error("Order already created in Shopify");
+  }
+
+  const hasCreationIssue = order.issues.some(
+    (issue) =>
+      issue.resolvedAt === null &&
+      issue.source === ISSUE_SOURCES.ORDER_PROCESSING,
+  );
+
+  if (order.status !== "failed" && !hasCreationIssue) {
+    throw new Error("Only orders with a creation failure can be retried");
   }
 
   const updated = await prisma.kornitxOrder.update({
@@ -23,18 +190,76 @@ export async function retryFailedOrder(shop: string, orderId: number) {
     data: { status: "received", failureReason: null },
   });
 
+  await resolveOrderIssuesBySource(orderId, ISSUE_SOURCES.ORDER_PROCESSING);
+  // Idempotent: one SyncJob per kornitxId; coalesces with any pending auto-retry.
   await enqueueProcessOrderJob(shop, updated.id, updated.kornitxId);
+
+  await writeEventLog({
+    shop,
+    level: EVENT_LOG_LEVELS.INFO,
+    category: EVENT_LOG_CATEGORIES.ORDER_FROM_KORNITX,
+    eventName: "shopify_order_manual_retry",
+    message: `Manual retry requested for KornitX order ${updated.kornitxId}.`,
+    kornitxOrderId: updated.kornitxId,
+    shopifyOrderId: updated.shopifyOrderId,
+    shopifyOrderName: updated.shopifyOrderName,
+  });
 
   return updated;
 }
 
-export async function getOrderStatusCounts() {
-  const groups = await prisma.kornitxOrder.groupBy({
-    by: ["status"],
-    _count: { status: true },
+export async function resendFulfillmentForOrder(shop: string, orderId: number) {
+  const order = await prisma.kornitxOrder.findUnique({
+    where: { id: orderId },
+    include: { shippingEvents: true },
   });
 
-  return Object.fromEntries(
-    groups.map((group) => [group.status, group._count.status]),
-  ) as Record<string, number>;
+  if (!order) {
+    throw new Error("Order not found");
+  }
+
+  const hasUnsent = order.shippingEvents.some((event) => !event.sent);
+  if (!hasUnsent) {
+    throw new Error("No unsent fulfillment statuses for this order");
+  }
+
+  await enqueueSendFulfillmentJobIfNeeded(
+    shop,
+    order.id,
+    order.kornitxId,
+    order.orderReceivedAt,
+    { forceReset: true },
+  );
+
+  await writeEventLog({
+    shop,
+    level: EVENT_LOG_LEVELS.INFO,
+    category: EVENT_LOG_CATEGORIES.SHIPMENT,
+    eventName: "fulfillment_manual_resend",
+    message: `Manual fulfillment resend requested for ${order.kornitxId}.`,
+    kornitxOrderId: order.kornitxId,
+    shopifyOrderId: order.shopifyOrderId,
+    shopifyOrderName: order.shopifyOrderName,
+  });
+
+  return order;
+}
+
+export function parseOrderListFilters(
+  searchParams: URLSearchParams,
+): OrderListFilters {
+  const page = Math.max(1, Number(searchParams.get("page") ?? "1") || 1);
+  const rawPageSize = Number(searchParams.get("pageSize") ?? "10");
+  const pageSize = [10, 25, 50].includes(rawPageSize) ? rawPageSize : 10;
+
+  return {
+    page,
+    pageSize,
+    q: searchParams.get("q") ?? "",
+    status: searchParams.get("status") ?? "all",
+    shape: searchParams.get("shape") ?? "all",
+    fulfillment: searchParams.get("fulfillment") ?? "all",
+    sendFulfillment: searchParams.get("sendFulfillment") ?? "all",
+    sort: searchParams.get("sort") === "oldest" ? "oldest" : "newest",
+  };
 }

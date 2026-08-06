@@ -2,11 +2,17 @@ import { loadEnv } from "./lib/load-env";
 import { disconnectPrisma } from "./lib/prisma";
 import { backfillProcessOrderJobs } from "./lib/backfill-jobs";
 import { dispatchSyncJob } from "./lib/dispatch-sync-job";
-import { completeJobRun, failJobRun, startJobRun } from "./lib/job-run";
 import {
   claimNextDueSyncJob,
   reclaimStaleSyncJobs,
 } from "./lib/sync-jobs";
+import { enqueueDailyFullFeedJobsIfDue } from "../app/models/sync-jobs.server";
+import { writeEventLog } from "../app/models/event-log.server";
+import { resolveDefaultShop } from "../app/models/shop.server";
+import {
+  EVENT_LOG_CATEGORIES,
+  EVENT_LOG_LEVELS,
+} from "../shared/event-log";
 
 loadEnv();
 
@@ -29,6 +35,7 @@ function sleep(ms: number): Promise<void> {
 
 type CycleStats = {
   backfilled: number;
+  fullFeedEnqueued: number;
   reclaimed: number;
   processed: number;
   completed: number;
@@ -41,6 +48,7 @@ type CycleStats = {
 function emptyStats(): CycleStats {
   return {
     backfilled: 0,
+    fullFeedEnqueued: 0,
     reclaimed: 0,
     processed: 0,
     completed: 0,
@@ -73,36 +81,61 @@ function recordOutcome(stats: CycleStats, result: Awaited<ReturnType<typeof disp
 
 async function runCycle(): Promise<CycleStats> {
   const stats = emptyStats();
-  const jobRun = await startJobRun("run-jobs");
+  const shop = await resolveDefaultShop();
 
-  try {
-    stats.backfilled = await backfillProcessOrderJobs();
-    stats.reclaimed = await reclaimStaleSyncJobs();
-
-    while (true) {
-      const job = await claimNextDueSyncJob();
-      if (!job) break;
-
-      stats.processed += 1;
-
-      try {
-        const result = await dispatchSyncJob(job);
-        recordOutcome(stats, result);
-      } catch (error) {
-        stats.errors += 1;
-        console.error(`[run-jobs] Unhandled error on sync job ${job.id}:`, error);
-      }
-    }
-
-    await completeJobRun(jobRun.id, stats);
-    console.log(
-      `[run-jobs] Cycle done. backfilled=${stats.backfilled} reclaimed=${stats.reclaimed} processed=${stats.processed} completed=${stats.completed} retryScheduled=${stats.retryScheduled} deferred=${stats.deferred} failed=${stats.failed} errors=${stats.errors}`,
-    );
-    return stats;
-  } catch (err) {
-    await failJobRun(jobRun.id, err);
-    throw err;
+  stats.backfilled = await backfillProcessOrderJobs();
+  if (stats.backfilled > 0) {
+    await writeEventLog({
+      shop,
+      level: EVENT_LOG_LEVELS.INFO,
+      category: EVENT_LOG_CATEGORIES.SYNC_JOB,
+      eventName: "sync_job_backfill_enqueued",
+      message: `Backfill enqueued ${stats.backfilled} process_order job(s).`,
+      metadata: { count: stats.backfilled },
+    });
   }
+
+  stats.fullFeedEnqueued = await enqueueDailyFullFeedJobsIfDue();
+  stats.reclaimed = await reclaimStaleSyncJobs();
+  if (stats.reclaimed > 0) {
+    await writeEventLog({
+      shop,
+      level: EVENT_LOG_LEVELS.WARN,
+      category: EVENT_LOG_CATEGORIES.SYNC_JOB,
+      eventName: "sync_job_stale_reclaimed",
+      message: `Reclaimed ${stats.reclaimed} stale processing SyncJob(s).`,
+      metadata: { count: stats.reclaimed },
+    });
+  }
+
+  while (true) {
+    const job = await claimNextDueSyncJob();
+    if (!job) break;
+
+    stats.processed += 1;
+
+    try {
+      const result = await dispatchSyncJob(job);
+      recordOutcome(stats, result);
+    } catch (error) {
+      stats.errors += 1;
+      console.error(`[run-jobs] Unhandled error on sync job ${job.id}:`, error);
+      await writeEventLog({
+        shop: job.shop,
+        level: EVENT_LOG_LEVELS.ERROR,
+        category: EVENT_LOG_CATEGORIES.SYNC_JOB,
+        eventName: "sync_job_unhandled_error",
+        message: `Unhandled error on SyncJob ${job.id} (${job.jobType}): ${error instanceof Error ? error.message : String(error)}`,
+        syncJobId: job.id,
+        metadata: { jobType: job.jobType },
+      });
+    }
+  }
+
+  console.log(
+    `[run-jobs] Cycle done. backfilled=${stats.backfilled} fullFeedEnqueued=${stats.fullFeedEnqueued} reclaimed=${stats.reclaimed} processed=${stats.processed} completed=${stats.completed} retryScheduled=${stats.retryScheduled} deferred=${stats.deferred} failed=${stats.failed} errors=${stats.errors}`,
+  );
+  return stats;
 }
 
 let shuttingDown = false;

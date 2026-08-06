@@ -1,5 +1,6 @@
 import { reactRouter } from "@react-router/dev/vite";
 import { defineConfig, type UserConfig } from "vite";
+import { amplifyHosting } from "vite-plugin-react-router-amplify-hosting";
 import tsconfigPaths from "vite-tsconfig-paths";
 
 // Related: https://github.com/remix-run/remix/issues/2835#issuecomment-1144102176
@@ -51,9 +52,15 @@ export default defineConfig({
   plugins: [
     reactRouter(),
     tsconfigPaths(),
+    amplifyHosting(),
   ],
   build: {
     assetsInlineLimit: 0,
+  },
+  // Keep Prisma external so Amplify SSR uses the native Linux query engine
+  // (copied into .amplify-hosting/compute in amplify.yml), not a broken bundled copy.
+  ssr: {
+    external: ["@prisma/client"],
   },
   optimizeDeps: {
     include: ["@shopify/app-bridge-react"],

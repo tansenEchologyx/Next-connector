@@ -1,6 +1,18 @@
+import {
+  isConfigurationError,
+  isConfigurationErrorMessage,
+} from "./configuration-error";
+
+// const RETRY_DEFAULTS = {
+//   baseMs: 5 * 60_000,
+//   maxMs: 6 * 60 * 60_000,
+//   maxAttempts: 8,
+//   jitterRatio: 0.2,
+// };
+
 const RETRY_DEFAULTS = {
-  baseMs: 5 * 60_000,
-  maxMs: 6 * 60 * 60_000,
+  baseMs: 5_000,        // 5 seconds (was 5 * 60_000)
+  maxMs: 60_000,        // 60 seconds cap (was 6 hours)
   maxAttempts: 8,
   jitterRatio: 0.2,
 };
@@ -25,14 +37,16 @@ function parseHttpStatus(message: string): number | null {
 }
 
 export function isRetryableError(error: unknown): boolean {
+  if (isConfigurationError(error)) {
+    return false;
+  }
+
   const message = error instanceof Error ? error.message : String(error);
   const lower = message.toLowerCase();
 
-  if (lower.includes("app settings missing")) return false;
-  if (lower.includes("select a b2b customer")) return false;
+  if (isConfigurationErrorMessage(message)) return false;
   if (lower.includes("no shopify variant found")) return false;
-  if (lower.includes("kornitx ref id")) return false;
-  if (lower.includes("kornitx api key")) return false;
+  if (lower.includes("no shopify primary location")) return false;
   if (lower.includes("50000")) return false;
   if (lower.includes("incorrect refid")) return false;
 

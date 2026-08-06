@@ -30,9 +30,3 @@ export async function upsertUnsentInventoryDelta(input: {
     },
   });
 }
-
-export async function countUnsentInventoryDeltas(shop: string): Promise<number> {
-  return prisma.inventoryDelta.count({
-    where: { shop, status: "unsent" },
-  });
-}

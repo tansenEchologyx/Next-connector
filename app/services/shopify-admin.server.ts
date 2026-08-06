@@ -1,4 +1,4 @@
-type AdminGraphql = {
+export type AdminGraphql = {
   graphql: (
     query: string,
     options?: { variables?: Record<string, unknown> },
@@ -8,6 +8,7 @@ type AdminGraphql = {
 export type ShopifyLocation = {
   id: string;
   name: string;
+  isPrimary: boolean;
 };
 
 export type ShopifyCustomer = {
@@ -35,12 +36,19 @@ export async function fetchLocations(
           nodes {
             id
             name
+            isPrimary
           }
         }
       }`,
   );
   const json = await response.json();
-  return json.data?.locations?.nodes ?? [];
+  return (json.data?.locations?.nodes ?? []).map(
+    (node: { id: string; name: string; isPrimary?: boolean }) => ({
+      id: node.id,
+      name: node.name,
+      isPrimary: Boolean(node.isPrimary),
+    }),
+  );
 }
 
 export async function fetchCustomers(

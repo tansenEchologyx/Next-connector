@@ -1,0 +1,29 @@
+version: 1
+frontend:
+  phases:
+    preBuild:
+      commands:
+        # vite-plugin-react-router-amplify-hosting requires Node.js v22.22+ (v22 or v24)
+        - nvm install 22
+        - nvm use 22
+        # NODE_ENV=production skips devDependencies; build needs vite + amplify plugin
+        - npm ci --include=dev --cache .npm --prefer-offline
+        - npx prisma generate
+    build:
+      commands:
+        - npm run build
+        # Prisma ships a native query engine; copy Linux artifacts into SSR compute bundle.
+        - mkdir -p .amplify-hosting/compute/default/node_modules/@prisma
+        - cp -r node_modules/.prisma .amplify-hosting/compute/default/node_modules/
+        - cp -r node_modules/@prisma/client .amplify-hosting/compute/default/node_modules/@prisma/
+        # Amplify Console vars are available at build time; bake them for SSR compute runtime.
+        - env | grep -E '^(DATABASE_URL|SHOPIFY_API_KEY|SHOPIFY_API_SECRET|SHOPIFY_APP_URL|SCOPES|NODE_ENV|SHOP_CUSTOM_DOMAIN|KORNITX_WEBHOOK_BASIC_USER|KORNITX_WEBHOOK_BASIC_PASSWORD|KORNITX_WEBHOOK_OAUTH_TOKEN)=' > .amplify-hosting/compute/default/.env || true
+        - npx prisma migrate deploy
+  artifacts:
+    baseDirectory: .amplify-hosting
+    files:
+      - "**/*"
+  cache:
+    paths:
+      - .npm/**/*
+      - node_modules/**/*
