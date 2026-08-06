@@ -7,6 +7,12 @@ import {
   reclaimStaleSyncJobs,
 } from "./lib/sync-jobs";
 import { enqueueDailyFullFeedJobsIfDue } from "../app/models/sync-jobs.server";
+import { writeEventLog } from "../app/models/event-log.server";
+import { resolveDefaultShop } from "../app/models/shop.server";
+import {
+  EVENT_LOG_CATEGORIES,
+  EVENT_LOG_LEVELS,
+} from "../shared/event-log";
 
 loadEnv();
 
@@ -75,10 +81,32 @@ function recordOutcome(stats: CycleStats, result: Awaited<ReturnType<typeof disp
 
 async function runCycle(): Promise<CycleStats> {
   const stats = emptyStats();
+  const shop = await resolveDefaultShop();
 
   stats.backfilled = await backfillProcessOrderJobs();
+  if (stats.backfilled > 0) {
+    await writeEventLog({
+      shop,
+      level: EVENT_LOG_LEVELS.INFO,
+      category: EVENT_LOG_CATEGORIES.SYNC_JOB,
+      eventName: "sync_job_backfill_enqueued",
+      message: `Backfill enqueued ${stats.backfilled} process_order job(s).`,
+      metadata: { count: stats.backfilled },
+    });
+  }
+
   stats.fullFeedEnqueued = await enqueueDailyFullFeedJobsIfDue();
   stats.reclaimed = await reclaimStaleSyncJobs();
+  if (stats.reclaimed > 0) {
+    await writeEventLog({
+      shop,
+      level: EVENT_LOG_LEVELS.WARN,
+      category: EVENT_LOG_CATEGORIES.SYNC_JOB,
+      eventName: "sync_job_stale_reclaimed",
+      message: `Reclaimed ${stats.reclaimed} stale processing SyncJob(s).`,
+      metadata: { count: stats.reclaimed },
+    });
+  }
 
   while (true) {
     const job = await claimNextDueSyncJob();
@@ -92,6 +120,15 @@ async function runCycle(): Promise<CycleStats> {
     } catch (error) {
       stats.errors += 1;
       console.error(`[run-jobs] Unhandled error on sync job ${job.id}:`, error);
+      await writeEventLog({
+        shop: job.shop,
+        level: EVENT_LOG_LEVELS.ERROR,
+        category: EVENT_LOG_CATEGORIES.SYNC_JOB,
+        eventName: "sync_job_unhandled_error",
+        message: `Unhandled error on SyncJob ${job.id} (${job.jobType}): ${error instanceof Error ? error.message : String(error)}`,
+        syncJobId: job.id,
+        metadata: { jobType: job.jobType },
+      });
     }
   }
 

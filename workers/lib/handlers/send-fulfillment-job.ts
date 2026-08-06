@@ -12,8 +12,14 @@ import {
   buildFulfillmentSendRetryWarningMessage,
 } from "../../../shared/order-processing-issues";
 import { refreshOrderSendFulfillmentStatus } from "../../../app/models/order-send-fulfillment-status.server";
+import { writeEventLog } from "../../../app/models/event-log.server";
 import { enqueueSendFulfillmentJobIfNeeded } from "../../../app/models/sync-jobs.server";
 import type { SendFulfillmentJobPayload } from "../../../shared/sync-job-types";
+import {
+  EVENT_LOG_CATEGORIES,
+  EVENT_LOG_LEVELS,
+} from "../../../shared/event-log";
+import { formatUkDateTime } from "../../../shared/uk-time";
 import {
   computeFulfillmentRunAfter,
   isFulfillmentSendDue,
@@ -77,6 +83,17 @@ export async function handleSendFulfillmentJob(job: SyncJob) {
       nextRunAt,
       "Waiting for fulfillment delay after order received",
     );
+    await writeEventLog({
+      shop: job.shop,
+      level: EVENT_LOG_LEVELS.INFO,
+      category: EVENT_LOG_CATEGORIES.SHIPMENT,
+      eventName: "fulfillment_send_deferred",
+      message: `Fulfillment send deferred for ${order.kornitxId} until ${formatUkDateTime(nextRunAt)}.`,
+      kornitxOrderId: order.kornitxId,
+      shopifyOrderId: order.shopifyOrderId,
+      shopifyOrderName: order.shopifyOrderName,
+      syncJobId: job.id,
+    });
     return { outcome: "deferred" as const, nextRunAt };
   }
 
@@ -91,6 +108,17 @@ export async function handleSendFulfillmentJob(job: SyncJob) {
     );
     await completeSyncJob(job.id);
     await refreshOrderSendFulfillmentStatus(order.id);
+    await writeEventLog({
+      shop: job.shop,
+      level: EVENT_LOG_LEVELS.INFO,
+      category: EVENT_LOG_CATEGORIES.SHIPMENT,
+      eventName: "fulfillment_send_nothing_to_send",
+      message: `No unsent shipping statuses for ${order.kornitxId}.`,
+      kornitxOrderId: order.kornitxId,
+      shopifyOrderId: order.shopifyOrderId,
+      shopifyOrderName: order.shopifyOrderName,
+      syncJobId: job.id,
+    });
     return { outcome: "nothing_to_send" as const };
   }
 
@@ -129,6 +157,18 @@ export async function handleSendFulfillmentJob(job: SyncJob) {
       `[run-jobs] Sent ${unsent.length} shipping status(es) to KornitX for order ${order.kornitxId} in one API call`,
     );
 
+    await writeEventLog({
+      shop: job.shop,
+      level: EVENT_LOG_LEVELS.SUCCESS,
+      category: EVENT_LOG_CATEGORIES.SHIPMENT,
+      eventName: "fulfillment_send_success",
+      message: `Sent ${unsent.length} shipping status(es) to KornitX for order ${order.kornitxId}.`,
+      kornitxOrderId: order.kornitxId,
+      shopifyOrderId: order.shopifyOrderId,
+      shopifyOrderName: order.shopifyOrderName,
+      syncJobId: job.id,
+    });
+
     return {
       outcome: "sent" as const,
       sentCount: unsent.length,
@@ -147,6 +187,17 @@ export async function handleSendFulfillmentJob(job: SyncJob) {
           ? buildFulfillmentConfigFailureMessage(message)
           : `Fulfillment status could not be sent to KornitX: ${message}`,
       );
+      await writeEventLog({
+        shop: job.shop,
+        level: EVENT_LOG_LEVELS.ERROR,
+        category: EVENT_LOG_CATEGORIES.SHIPMENT,
+        eventName: "fulfillment_send_failed_terminal",
+        message: `Fulfillment send terminally failed for ${order.kornitxId} — ${message}`,
+        kornitxOrderId: order.kornitxId,
+        shopifyOrderId: order.shopifyOrderId,
+        shopifyOrderName: order.shopifyOrderName,
+        syncJobId: job.id,
+      });
     } else {
       await upsertOpenOrderIssue(
         order.id,
@@ -158,6 +209,17 @@ export async function handleSendFulfillmentJob(job: SyncJob) {
           result.nextRunAt,
         ),
       );
+      await writeEventLog({
+        shop: job.shop,
+        level: EVENT_LOG_LEVELS.WARN,
+        category: EVENT_LOG_CATEGORIES.SHIPMENT,
+        eventName: "fulfillment_send_retry_scheduled",
+        message: `Fulfillment send failed for ${order.kornitxId} (attempt ${result.attemptCount}) — ${message} Next retry at ${formatUkDateTime(result.nextRunAt)}.`,
+        kornitxOrderId: order.kornitxId,
+        shopifyOrderId: order.shopifyOrderId,
+        shopifyOrderName: order.shopifyOrderName,
+        syncJobId: job.id,
+      });
     }
 
     await refreshOrderSendFulfillmentStatus(order.id);

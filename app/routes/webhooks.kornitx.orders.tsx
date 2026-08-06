@@ -1,8 +1,13 @@
 import type { ActionFunctionArgs, LoaderFunctionArgs } from "react-router";
 
 import { saveInboundOrders } from "../models/kornitx-inbound.server";
+import { writeEventLog } from "../models/event-log.server";
 import { resolveDefaultShop } from "../models/shop.server";
 import { verifyKornitxWebhookAuth } from "../services/kornitx-webhook-auth.server";
+import {
+  EVENT_LOG_CATEGORIES,
+  EVENT_LOG_LEVELS,
+} from "../../shared/event-log";
 import {
   KornitxParseError,
   parseKornitxOrderPayload,
@@ -27,6 +32,18 @@ export const action = async ({ request }: ActionFunctionArgs) => {
   const auth = verifyKornitxWebhookAuth(request);
   if (!auth.ok) {
     console.error(`[kornitx/orders] Auth failed: ${auth.message}`);
+    try {
+      const shop = await resolveDefaultShop();
+      await writeEventLog({
+        shop,
+        level: EVENT_LOG_LEVELS.ERROR,
+        category: EVENT_LOG_CATEGORIES.ORDER_FROM_KORNITX,
+        eventName: "kornitx_webhook_auth_failed",
+        message: `KornitX orders webhook auth failed: ${auth.message}`,
+      });
+    } catch {
+      // Shop not configured — skip event log
+    }
     return jsonResponse({ code: auth.code, message: auth.message }, 401);
   }
 
@@ -34,6 +51,18 @@ export const action = async ({ request }: ActionFunctionArgs) => {
   try {
     body = await request.json();
   } catch {
+    try {
+      const shop = await resolveDefaultShop();
+      await writeEventLog({
+        shop,
+        level: EVENT_LOG_LEVELS.ERROR,
+        category: EVENT_LOG_CATEGORIES.ORDER_FROM_KORNITX,
+        eventName: "kornitx_webhook_invalid_json",
+        message: "KornitX orders webhook rejected invalid JSON.",
+      });
+    } catch {
+      // Shop not configured
+    }
     return jsonResponse({ code: 100, message: "Invalid JSON" }, 400);
   }
 
@@ -56,10 +85,37 @@ export const action = async ({ request }: ActionFunctionArgs) => {
   } catch (error) {
     if (error instanceof KornitxParseError) {
       console.error(`[kornitx/orders] Validation failed: ${error.message}`);
+      try {
+        const shop = await resolveDefaultShop();
+        await writeEventLog({
+          shop,
+          level: EVENT_LOG_LEVELS.ERROR,
+          category: EVENT_LOG_CATEGORIES.ORDER_FROM_KORNITX,
+          eventName: "kornitx_webhook_validation_failed",
+          message: `KornitX orders webhook validation failed: ${error.message}`,
+        });
+      } catch {
+        // Shop not configured
+      }
       return jsonResponse({ code: error.code, message: error.message }, 400);
     }
 
     console.error("[kornitx/orders] Unexpected error:", error);
+    try {
+      const shop = await resolveDefaultShop();
+      await writeEventLog({
+        shop,
+        level: EVENT_LOG_LEVELS.ERROR,
+        category: EVENT_LOG_CATEGORIES.ORDER_FROM_KORNITX,
+        eventName: "kornitx_webhook_unexpected_error",
+        message:
+          error instanceof Error
+            ? error.message
+            : "Unexpected KornitX orders webhook error.",
+      });
+    } catch {
+      // Shop not configured
+    }
     return jsonResponse(
       {
         code: 0,

@@ -9,6 +9,7 @@ import {
   formatUkCalendarDate,
   isDailyFullFeedDue,
 } from "../../shared/uk-time";
+import { writeFullFeedEnqueuedEventLog } from "../../shared/event-log-inventory";
 import {
   SYNC_JOB_STATUSES,
   SYNC_JOB_TYPES,
@@ -270,6 +271,7 @@ export async function enqueueDailyFullFeedJobsIfDue(now = new Date()) {
   for (const settings of settingsRows) {
     if (!isDailyFullFeedDue(settings, now)) continue;
     await enqueueSendInventoryFullFeedJob(settings.shop, ukDate);
+    await writeFullFeedEnqueuedEventLog(settings.shop, ukDate);
     enqueued += 1;
   }
 

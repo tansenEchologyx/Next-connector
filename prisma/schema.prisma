@@ -222,3 +222,26 @@ model InventorySyncIssue {
   @@index([shop, resolvedAt])
   @@index([shop, syncType, resolvedAt])
 }
+
+// --- Operational event log (admin feed) ---
+
+model EventLog {
+  id               Int      @id @default(autoincrement())
+  shop             String
+  level            String   // info | success | warn | error
+  category         String   // inventory_delta | full_feed_inventory | order_from_kornitx | sync_job | shipment
+  eventName        String
+  message          String
+  kornitxOrderId   String?
+  shopifyOrderId   String?
+  shopifyOrderName String?
+  syncJobId        Int?
+  metadata         Json?
+  createdAt        DateTime @default(now())
+
+  @@index([shop, createdAt(sort: Desc), id(sort: Desc)])
+  @@index([shop, level, createdAt(sort: Desc)])
+  @@index([shop, category, createdAt(sort: Desc)])
+  @@index([shop, shopifyOrderName])
+  @@index([shop, kornitxOrderId])
+}
