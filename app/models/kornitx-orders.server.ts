@@ -5,11 +5,16 @@ import {
   ISSUE_SOURCES,
   resolveOrderIssuesBySource,
 } from "./kornitx-order-issues.server";
+import { writeEventLog } from "./event-log.server";
 import {
   enqueueProcessOrderJob,
   enqueueSendFulfillmentJobIfNeeded,
 } from "./sync-jobs.server";
 import { serializeOrderListRow } from "../../shared/order-display";
+import {
+  EVENT_LOG_CATEGORIES,
+  EVENT_LOG_LEVELS,
+} from "../../shared/event-log";
 import { SYNC_JOB_TYPES } from "../../shared/sync-job-types";
 
 export type OrderListFilters = {
@@ -189,6 +194,17 @@ export async function retryFailedOrder(shop: string, orderId: number) {
   // Idempotent: one SyncJob per kornitxId; coalesces with any pending auto-retry.
   await enqueueProcessOrderJob(shop, updated.id, updated.kornitxId);
 
+  await writeEventLog({
+    shop,
+    level: EVENT_LOG_LEVELS.INFO,
+    category: EVENT_LOG_CATEGORIES.ORDER_FROM_KORNITX,
+    eventName: "shopify_order_manual_retry",
+    message: `Manual retry requested for KornitX order ${updated.kornitxId}.`,
+    kornitxOrderId: updated.kornitxId,
+    shopifyOrderId: updated.shopifyOrderId,
+    shopifyOrderName: updated.shopifyOrderName,
+  });
+
   return updated;
 }
 
@@ -214,6 +230,17 @@ export async function resendFulfillmentForOrder(shop: string, orderId: number) {
     order.orderReceivedAt,
     { forceReset: true },
   );
+
+  await writeEventLog({
+    shop,
+    level: EVENT_LOG_LEVELS.INFO,
+    category: EVENT_LOG_CATEGORIES.SHIPMENT,
+    eventName: "fulfillment_manual_resend",
+    message: `Manual fulfillment resend requested for ${order.kornitxId}.`,
+    kornitxOrderId: order.kornitxId,
+    shopifyOrderId: order.shopifyOrderId,
+    shopifyOrderName: order.shopifyOrderName,
+  });
 
   return order;
 }

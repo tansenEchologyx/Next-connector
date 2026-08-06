@@ -2,7 +2,7 @@
 
 Documentation of **features built so far** in the Next Connector Shopify app (KornitX / Next Label Plus integration).
 
-_Last updated: Amplify SSR build config (`amplify.yml` + Vite Amplify hosting plugin)._
+_Last updated: Event log admin page (`/app/event-log`) with cursor-based load-more and 30s auto-refresh._
 
 ---
 
@@ -42,6 +42,7 @@ This file lists only what is **implemented today**.
   - **KornitxOrderIssue** — active warnings/errors per order (order processing, fulfillment send); retryable failures surface as warnings with the next retry time
   - **ShippingStatusEvent** — fulfillment events queued for KornitX (source of truth for outbound line/order status; drives worker sends)
   - **SyncJob** — unified work queue (`process_order`, `send_fulfillment`, `send_inventory_delta`, `send_inventory_full_feed`)
+  - **EventLog** — append-only operational event feed for the admin Event log page (level, category, order linkage, sync job id, metadata)
 
 ### 3. Admin UI (Polaris Web Components)
 
@@ -53,6 +54,7 @@ This file lists only what is **implemented today**.
 | `/app/orders` | Full-width paginated KornitX order list — times in **UK timezone**; search/filters (creation status, shape, Shopify fulfillment, send-to-KornitX status via indexed `sendFulfillmentStatus`), issues, **Retry** on any order-creation failure (auto-retry pending or exhausted), fulfillment Resend |
 | `/app/inventory` | Full-width paginated product table with checkboxes — **all shop barcoded variants**; qty/availability at configured location; search + availability + tracking filters; page size 25/50/100 (default 25); optional **Show tracked first** (default off; reorder after Save when on); **header checkbox** selects/deselects the full catalog; draft selection persists across search/filter/pagination until Save or leaving the page; **Products / Sync log** tabs |
 | `/app/inventory/sync-log` | Inventory sync run history — update-in-place for backoff retries (Failed + Next retry); terminal Failed clears Next retry; delta partial is a separate historical row; status badges (success / partial / failed / deferred / skipped); issue popover; filters by type/status/sort |
+| `/app/event-log` | Cross-flow **operational feed** — newest 50 events server-side; **Refresh now** + **30s auto-refresh** (head only); **Load more** cursor pagination for older rows; filters: level (error / success / warn / info), category (Inventory Delta, Full feed inventory, Order From Kornitx, Syncjob, Shipment), UK date range, order search (500ms debounce); order links to Orders list |
 | `/app/settings` | Full-width page — KornitX Ref ID, B2B customer, **Next Label Plus orders** (pre-emptive prefix + require toggle), **Inventory sync** (delta interval minutes, location, use-primary toggle, daily full-feed enable + UK time), inbound webhook URL |
 
 ### 4. Webhooks
@@ -85,7 +87,7 @@ KornitX inbound auth is configured in `.env` (`KORNITX_WEBHOOK_BASIC_*` or `KORN
 6. Marks each job **`processing`** while in flight (safe for multiple worker instances later)
 7. Retryable errors use exponential backoff on the SyncJob (`nextRunAt`, up to 8 attempts). Order-creation failures also show a manual **Retry** button while backoff is running and after attempts are exhausted — Retry **upserts** the same `process_order` job (no duplicate queue rows; skips reset if already `processing`). **Configuration errors** (missing B2B customer, required prefix when required, inventory location, Ref ID, API key) fail **immediately** with no backoff — order/fulfillment need a manual Retry/Resend; inventory jobs self-heal on the next cycle after settings are fixed
 
-Cycle stats are logged to the worker console only (no `JobRun` table).
+Cycle stats are logged to the worker console only. Meaningful worker events (backfill, stale reclaim, unhandled errors) and domain outcomes (orders, inventory, fulfillment) write **EventLog** rows at webhook and worker boundaries.
 
 **Before order processing:** B2B customer in `/app/settings`. Optional: pre-emptive prefix (required only when “Require prefix” is on). KornitX **EAN = Shopify variant barcode**. Created Shopify orders use name `NXT-{kornitxId}` and tags `NXTLabel`, `NXT-`, plus `next-live` / `next-preemptive` from the prefix (for Torque filtering vs web orders). If the B2B customer has a default Shopify address it is attached; otherwise the order is created without a shipping address.
 

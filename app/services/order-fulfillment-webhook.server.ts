@@ -1,6 +1,11 @@
 import prisma from "../db.server";
+import { writeEventLog } from "../models/event-log.server";
 import { createShippingStatusEvent } from "../models/shipping-events.server";
 import { enqueueSendFulfillmentJobIfNeeded } from "../models/sync-jobs.server";
+import {
+  EVENT_LOG_CATEGORIES,
+  EVENT_LOG_LEVELS,
+} from "../../shared/event-log";
 
 type ShopifyLineItemPayload = {
   id?: number;
@@ -91,6 +96,7 @@ async function updateShopifyFulfillmentStatus(
 export async function handleOrderFulfillmentWebhook(
   shop: string,
   payload: ShopifyOrderWebhookPayload,
+  topic = "orders/fulfilled",
 ) {
   const shopifyOrderId = orderGid(payload);
   if (!shopifyOrderId) {
@@ -107,6 +113,17 @@ export async function handleOrderFulfillmentWebhook(
   }
 
   await updateShopifyFulfillmentStatus(kornitxOrder.id, payload);
+
+  await writeEventLog({
+    shop,
+    level: EVENT_LOG_LEVELS.INFO,
+    category: EVENT_LOG_CATEGORIES.SHIPMENT,
+    eventName: "fulfillment_webhook_received",
+    message: `Shopify ${topic} webhook received.`,
+    kornitxOrderId: kornitxOrder.kornitxId,
+    shopifyOrderId: kornitxOrder.shopifyOrderId,
+    shopifyOrderName: kornitxOrder.shopifyOrderName,
+  });
 
   let created = 0;
 
@@ -127,6 +144,18 @@ export async function handleOrderFulfillmentWebhook(
     }
 
     await queueFulfillmentJobIfNeeded(shop, kornitxOrder, created);
+    if (created > 0) {
+      await writeEventLog({
+        shop,
+        level: EVENT_LOG_LEVELS.INFO,
+        category: EVENT_LOG_CATEGORIES.SHIPMENT,
+        eventName: "shipping_event_created",
+        message: `${created} shipping status event(s) queued for KornitX.`,
+        kornitxOrderId: kornitxOrder.kornitxId,
+        shopifyOrderId: kornitxOrder.shopifyOrderId,
+        shopifyOrderName: kornitxOrder.shopifyOrderName,
+      });
+    }
     return { created, reason: "ok" as const };
   }
 
@@ -152,6 +181,19 @@ export async function handleOrderFulfillmentWebhook(
   }
 
   await queueFulfillmentJobIfNeeded(shop, kornitxOrder, created);
+
+  if (created > 0) {
+    await writeEventLog({
+      shop,
+      level: EVENT_LOG_LEVELS.INFO,
+      category: EVENT_LOG_CATEGORIES.SHIPMENT,
+      eventName: "shipping_event_created",
+      message: `${created} shipping status event(s) queued for KornitX.`,
+      kornitxOrderId: kornitxOrder.kornitxId,
+      shopifyOrderId: kornitxOrder.shopifyOrderId,
+      shopifyOrderName: kornitxOrder.shopifyOrderName,
+    });
+  }
 
   return { created, reason: "ok" as const };
 }
@@ -184,6 +226,17 @@ export async function handleOrderCancelledWebhook(
 
   await updateShopifyFulfillmentStatus(kornitxOrder.id, payload, true);
 
+  await writeEventLog({
+    shop,
+    level: EVENT_LOG_LEVELS.INFO,
+    category: EVENT_LOG_CATEGORIES.SHIPMENT,
+    eventName: "fulfillment_webhook_received",
+    message: "Shopify orders/cancelled webhook received.",
+    kornitxOrderId: kornitxOrder.kornitxId,
+    shopifyOrderId: kornitxOrder.shopifyOrderId,
+    shopifyOrderName: kornitxOrder.shopifyOrderName,
+  });
+
   const dispatchedItemIds = new Set(
     kornitxOrder.shippingEvents
       .filter((event) => event.status === "dispatched")
@@ -205,6 +258,18 @@ export async function handleOrderCancelledWebhook(
       if (result.created) created += 1;
     }
     await queueFulfillmentJobIfNeeded(shop, kornitxOrder, created);
+    if (created > 0) {
+      await writeEventLog({
+        shop,
+        level: EVENT_LOG_LEVELS.INFO,
+        category: EVENT_LOG_CATEGORIES.SHIPMENT,
+        eventName: "shipping_event_created",
+        message: `${created} cancelled shipping status event(s) queued for KornitX.`,
+        kornitxOrderId: kornitxOrder.kornitxId,
+        shopifyOrderId: kornitxOrder.shopifyOrderId,
+        shopifyOrderName: kornitxOrder.shopifyOrderName,
+      });
+    }
     return { created, reason: "ok" as const };
   }
 
@@ -230,6 +295,19 @@ export async function handleOrderCancelledWebhook(
   }
 
   await queueFulfillmentJobIfNeeded(shop, kornitxOrder, created);
+
+  if (created > 0) {
+    await writeEventLog({
+      shop,
+      level: EVENT_LOG_LEVELS.INFO,
+      category: EVENT_LOG_CATEGORIES.SHIPMENT,
+      eventName: "shipping_event_created",
+      message: `${created} cancelled shipping status event(s) queued for KornitX.`,
+      kornitxOrderId: kornitxOrder.kornitxId,
+      shopifyOrderId: kornitxOrder.shopifyOrderId,
+      shopifyOrderName: kornitxOrder.shopifyOrderName,
+    });
+  }
 
   return { created, reason: "ok" as const };
 }

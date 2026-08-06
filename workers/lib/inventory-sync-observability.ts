@@ -18,6 +18,7 @@ import {
   buildInventorySyncPartialFailureMessage,
   buildInventorySyncRetryMessage,
 } from "../../shared/order-processing-issues";
+import { writeInventorySyncEventLog } from "../../shared/event-log-inventory";
 
 export type RecordInventorySyncOutcomeInput = {
   shop: string;
@@ -78,6 +79,7 @@ export async function recordInventorySyncOutcome(
   });
 
   if (!input.issue) {
+    await writeInventorySyncEventLog(input);
     return run;
   }
 
@@ -86,6 +88,7 @@ export async function recordInventorySyncOutcome(
 
   if (input.issue.kind === "resolve") {
     await resolveInventorySyncIssuesByType(input.shop, input.syncType);
+    await writeInventorySyncEventLog(input);
     return run;
   }
 
@@ -98,6 +101,7 @@ export async function recordInventorySyncOutcome(
       INVENTORY_SYNC_ISSUE_TYPES.WARNING,
       buildInventorySyncPartialFailureMessage(label, errorText, nextRunAt),
     );
+    await writeInventorySyncEventLog(input);
     return run;
   }
 
@@ -116,6 +120,7 @@ export async function recordInventorySyncOutcome(
         nextRunAt,
       ),
     );
+    await writeInventorySyncEventLog(input);
     return run;
   }
 
@@ -131,6 +136,7 @@ export async function recordInventorySyncOutcome(
     terminalMessage,
   );
 
+  await writeInventorySyncEventLog(input);
   return run;
 }
 

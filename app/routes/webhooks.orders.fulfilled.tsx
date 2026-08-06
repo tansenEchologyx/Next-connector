@@ -11,6 +11,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
   const result = await handleOrderFulfillmentWebhook(
     shop,
     payload as Record<string, unknown>,
+    topic,
   );
 
   console.log(

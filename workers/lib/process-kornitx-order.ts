@@ -1,5 +1,10 @@
 import type { KornitxOrder, KornitxOrderItem } from "@prisma/client";
 
+import { writeEventLog } from "../../app/models/event-log.server";
+import {
+  EVENT_LOG_CATEGORIES,
+  EVENT_LOG_LEVELS,
+} from "../../shared/event-log";
 import { assertOrderSettings, loadAppSettings } from "./app-settings";
 import { createShopifyOrderFromKornitx } from "./create-shopify-order";
 import { markOrderCreated } from "./orders";
@@ -36,6 +41,17 @@ export async function processKornitxOrder(
   console.log(
     `[run-jobs] Created Shopify order ${result.shopifyOrderName} (${result.shopifyOrderId}) for KornitX ${order.kornitxId}`,
   );
+
+  await writeEventLog({
+    shop,
+    level: EVENT_LOG_LEVELS.SUCCESS,
+    category: EVENT_LOG_CATEGORIES.ORDER_FROM_KORNITX,
+    eventName: "shopify_order_created",
+    message: `Created Shopify order for KornitX order ${order.kornitxId}.`,
+    kornitxOrderId: order.kornitxId,
+    shopifyOrderId: result.shopifyOrderId,
+    shopifyOrderName: result.shopifyOrderName,
+  });
 
   return result;
 }

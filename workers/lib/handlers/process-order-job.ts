@@ -5,12 +5,18 @@ import {
   ISSUE_TYPES,
   upsertOpenOrderIssue,
 } from "../../../app/models/kornitx-order-issues.server";
+import { writeEventLog } from "../../../app/models/event-log.server";
 import { isConfigurationError } from "../../../shared/configuration-error";
+import {
+  EVENT_LOG_CATEGORIES,
+  EVENT_LOG_LEVELS,
+} from "../../../shared/event-log";
 import {
   buildOrderCreationConfigFailureMessage,
   buildOrderCreationRetryWarningMessage,
 } from "../../../shared/order-processing-issues";
 import type { ProcessOrderJobPayload } from "../../../shared/sync-job-types";
+import { formatUkDateTime } from "../../../shared/uk-time";
 import { processKornitxOrder } from "../process-kornitx-order";
 import { prisma } from "../prisma";
 import {
@@ -36,10 +42,30 @@ export async function handleProcessOrderJob(job: SyncJob) {
 
   if (order.status === "created") {
     await completeSyncJob(job.id);
+    await writeEventLog({
+      shop: job.shop,
+      level: EVENT_LOG_LEVELS.INFO,
+      category: EVENT_LOG_CATEGORIES.ORDER_FROM_KORNITX,
+      eventName: "shopify_order_already_created",
+      message: `KornitX order ${order.kornitxId} already has a Shopify order.`,
+      kornitxOrderId: order.kornitxId,
+      shopifyOrderId: order.shopifyOrderId,
+      shopifyOrderName: order.shopifyOrderName,
+      syncJobId: job.id,
+    });
     return { outcome: "already_created" as const };
   }
 
   await markOrderProcessing(order.id);
+  await writeEventLog({
+    shop: job.shop,
+    level: EVENT_LOG_LEVELS.INFO,
+    category: EVENT_LOG_CATEGORIES.ORDER_FROM_KORNITX,
+    eventName: "shopify_order_processing_started",
+    message: `Processing KornitX order ${order.kornitxId} for Shopify creation.`,
+    kornitxOrderId: order.kornitxId,
+    syncJobId: job.id,
+  });
 
   try {
     await processKornitxOrder(order);
@@ -69,6 +95,26 @@ export async function handleProcessOrderJob(job: SyncJob) {
           result.nextRunAt,
         ),
       );
+
+      await writeEventLog({
+        shop: job.shop,
+        level: EVENT_LOG_LEVELS.WARN,
+        category: EVENT_LOG_CATEGORIES.ORDER_FROM_KORNITX,
+        eventName: "shopify_order_creation_retry_scheduled",
+        message: `Shopify order creation failed for ${order.kornitxId} (attempt ${result.attemptCount}) — ${message} Next retry at ${formatUkDateTime(result.nextRunAt)}.`,
+        kornitxOrderId: order.kornitxId,
+        syncJobId: job.id,
+      });
+    } else {
+      await writeEventLog({
+        shop: job.shop,
+        level: EVENT_LOG_LEVELS.ERROR,
+        category: EVENT_LOG_CATEGORIES.ORDER_FROM_KORNITX,
+        eventName: "shopify_order_creation_failed_terminal",
+        message: `Shopify order creation terminally failed for ${order.kornitxId} — ${message}`,
+        kornitxOrderId: order.kornitxId,
+        syncJobId: job.id,
+      });
     }
 
     return {

@@ -4,22 +4,22 @@ overview: Add a unified Event Log admin page with cursor-based pagination, filte
 todos:
   - id: schema
     content: Add EventLog Prisma model, migration, shared constants (levels, categories, page size, poll interval)
-    status: pending
+    status: completed
   - id: server
     content: Create event-log.server.ts (writeEventLog, fetchEventLogsPageForAdmin) + filter/date-range shared helpers
-    status: pending
+    status: completed
   - id: routes
     content: Build /app/event-log page and /app/event-log/data resource with head/tail merge, 30s poll, load-more
-    status: pending
+    status: completed
   - id: filters-ui
     content: "Implement filter bar: level, category, Seko-style date range popover, 500ms debounced order search, Clear"
-    status: pending
+    status: completed
   - id: instrument
     content: Add writeEventLog calls across Kornitx inbound, order processing, inventory delta/full feed, shipment, sync-job flows
-    status: pending
+    status: completed
   - id: docs
     content: Update About_App_Readme.md and Learn.md; add Event log nav link in app.tsx
-    status: pending
+    status: completed
 isProject: false
 ---
 

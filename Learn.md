@@ -105,6 +105,7 @@ Prisma turns `schema.prisma` into TypeScript types and SQL tables.
 | `KornitxOrderIssue` | Active warnings/errors per order |
 | `ShippingStatusEvent` | “Tell KornitX this line shipped/cancelled” queue — unique per `(shopifyOrderId, shopifyLineItemId, status)`; only `sent: false` rows go to KornitX |
 | `SyncJob` | Work queue: `process_order`, `send_fulfillment`, `send_inventory_delta`, `send_inventory_full_feed`, with retry backoff |
+| `EventLog` | Operational event feed for `/app/event-log`: level, category, message, optional order ids, optional `syncJobId`, JSON metadata |
 
 ### Order status flow
 
@@ -367,7 +368,7 @@ The loader still fetches **all** barcoded variants from Shopify on enter/reload 
 
 **Header:** Refresh revalidates the loader.
 
-**Written by workers:** `recordInventorySyncOutcome` in `workers/lib/inventory-sync-observability.ts`, called from `send-inventory-delta-job.ts` and `send-inventory-full-feed-job.ts` on every meaningful outcome.
+**Written by workers:** `recordInventorySyncOutcome` in `workers/lib/inventory-sync-observability.ts`, called from `send-inventory-delta-job.ts` and `send-inventory-full-feed-job.ts` on every meaningful outcome. The same outcomes also mirror into **EventLog** via `writeInventorySyncEventLog` in `shared/event-log-inventory.ts`.
 **Helper files:**
 
 - `app/models/tracked-products.server.ts`
@@ -376,6 +377,38 @@ The loader still fetches **all** barcoded variants from Shopify on enter/reload 
 - `app/components/inventory/inventory-filters.tsx` — filter bar UI
 
 **Future (not built yet):** Parent/variant accordion — group by `productId`, parent row with checkbox that selects all child variants, accordion open by default with indented variant rows. When search/filters are active, keep a flat list (hierarchy is awkward when only one variant matches).
+
+---
+
+### `/app/event-log` — Operational event feed (`app/routes/app.event-log.tsx`)
+
+**Story:** Merchant monitors cross-flow activity (KornitX orders, inventory sync, fulfillment, worker infra) in one chronological feed — newest first, with filters and load-more for older rows.
+
+**Layout:** `s-page` heading “Event log”, info banner (30s refresh note), filter card, stacked event cards (level badge + category + `eventName` + UK timestamp + message + order link when present).
+
+**Loader:** `fetchEventLogsPageForAdmin(shop, filters)` — first **50** rows from PostgreSQL with server-side filters (not client-side).
+
+**Data resource:** `/app/event-log/data` (`app/routes/app.event-log.data.tsx`) — same query with optional `cursor` for load-more. Used by `useFetcher` for poll + Load more.
+
+**Pagination model (head / tail):**
+
+1. **Head** — always the latest page (initial loader + Refresh now + 30s poll).
+2. **Tail** — older pages appended by **Load more** (`cursor` = last visible event id, Prisma `skip: 1`).
+3. On poll, events displaced from head move into tail so nothing disappears.
+4. Changing any filter clears tail and reloads page 1.
+
+**Filters (URL params):** `level`, `category`, `dateFrom`, `dateTo`, `q` (order search — KornitX id, Shopify order name, Shopify order GID fragment). Order search debounces **500ms**. Date range uses UK calendar-day bounds (`shared/event-log-date-range.ts` → `createdAtBoundsFromDateFilters`).
+
+**Categories:** `inventory_delta`, `full_feed_inventory`, `order_from_kornitx`, `sync_job`, `shipment`.
+
+**Write path:** `writeEventLog()` in `app/models/event-log.server.ts` — called from KornitX inbound webhooks, order workers, inventory sync observability, fulfillment webhooks/workers, inventory webhook, admin Retry/Resend, and `run-jobs` (backfill, stale reclaim, unhandled errors — not cycle summaries).
+
+**Helper files:**
+
+- `shared/event-log.ts` — levels, categories, page size (50), poll interval (30s)
+- `shared/event-log-filters.ts` — parse URL filters
+- `app/lib/event-log-feed.client.ts` — merge head/tail, append load-more pages
+- `app/components/event-log/*` — filters, entry cards, styles
 
 ---
 
